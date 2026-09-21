@@ -1,0 +1,22 @@
+# Environments
+venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Secrets & Configs
+.env
+service_account.json
+*.json
+
+# Temp media outputs
+*.mp4
+*.png
+*.jpg
+*.jpeg
+
+# OS files
+.DS_Store

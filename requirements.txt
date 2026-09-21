@@ -1,0 +1,9 @@
+streamlit
+google-genai
+pillow
+opencv-python-headless
+moviepy
+python-dotenv
+pydantic
+streamlit-tags
+streamlit-local-storage
