@@ -1,8 +1,8 @@
-google-genai
-pillow
-opencv-python-headless
-moviepy
-python-dotenv
-pydantic
-streamlit-tags
-streamlit-local-storage
+google-genai>=2.7.0
+pillow>=11.0.0
+opencv-python-headless>=4.10.0.84
+moviepy>=2.0.0
+python-dotenv>=1.0.0
+pydantic>=2.10.0
+streamlit-tags>=1.2.8
+streamlit-local-storage>=0.0.25
