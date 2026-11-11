@@ -1,0 +1,21 @@
+# Files never uploaded when deploying from source (same list as .dockerignore).
+.gcloudignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.git
+.gitignore
+.env
+.pytest_cache/
+service-account.json
+service_account.json
+*service-account*.json
+*service_account*.json
+test_*.py
+list_*.py
+.run-env.yaml

@@ -28,3 +28,9 @@ service-account.json
 node_modules/
 dist/
 *.apk
+
+# Cloud Run settings used at deploy time (holds the allowlist)
+.run-env.yaml
+
+# Firebase CLI deploy cache
+.firebase/

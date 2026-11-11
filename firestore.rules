@@ -112,6 +112,26 @@ service cloud.firestore {
                 || data.get('skipped', false) is bool);
     }
 
+    // ── Eleviat landing page (a separate site in this Firebase project) ──
+    // Anyone may CREATE an application with validated fields; nobody can read, change or
+    // delete one through the client (use the Firebase console or the Admin SDK).
+    // Kept here because deploying this file replaces the project's whole ruleset.
+    match /eleviat_applications/{docId} {
+      allow create: if request.resource.data.keys().hasOnly(['storeUrl', 'product', 'photos', 'look', 'idea', 'email', 'spend', 'source', 'createdAt'])
+        && request.resource.data.keys().hasAll(['email', 'storeUrl', 'product', 'look', 'idea'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 200
+        && request.resource.data.email.matches('^[^@]+@[^@]+$')
+        && request.resource.data.storeUrl is string && request.resource.data.storeUrl.size() <= 300
+        && request.resource.data.product is string && request.resource.data.product.size() <= 300
+        && request.resource.data.look is string && request.resource.data.look.size() <= 100
+        && request.resource.data.idea is string && request.resource.data.idea.size() <= 2000
+        && (!('photos' in request.resource.data) || (request.resource.data.photos is string && request.resource.data.photos.size() <= 100))
+        && (!('spend' in request.resource.data) || (request.resource.data.spend is string && request.resource.data.spend.size() <= 100))
+        && (!('source' in request.resource.data) || request.resource.data.source == 'eleviat.com')
+        && (!('createdAt' in request.resource.data) || request.resource.data.createdAt is timestamp);
+    }
+
     // ── Users ──
     // Users can read/write only their own profile.
     // The uid field must match the authenticated user.
