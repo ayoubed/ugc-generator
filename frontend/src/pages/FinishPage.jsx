@@ -6,6 +6,8 @@ import Stepper from '../components/Stepper';
 import LoadingSpinner from '../components/LoadingSpinner';
 import FinishCard from '../components/FinishCard';
 import MusicCard from '../components/MusicCard';
+import EndCardCard from '../components/EndCardCard';
+import { useAuth } from '../hooks/useAuth';
 import SaveIndicator from '../components/SaveIndicator';
 import { useNow } from '../hooks/useNow';
 import { useDoneNotifications } from '../hooks/useDoneNotifications';
@@ -68,6 +70,7 @@ function CaptionPreview({ scene, style, text, portrait }) {
 
 function FinishVideo({ projectId: id }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { project, loading: projectLoading } = useProject(id);
   const { scenes, loading: scenesLoading } = useScenes(id);
 
@@ -320,6 +323,11 @@ function FinishVideo({ projectId: id }) {
                 </FinishCard>
 
                 <MusicCard project={project} now={now} disabled={stitching} />
+                <EndCardCard
+                  project={project}
+                  storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
+                  disabled={stitching}
+                />
               </div>
 
               <aside className="finish-side">

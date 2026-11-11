@@ -165,6 +165,13 @@ def duplicate_project_endpoint(
             pictures.append({**item, "storageRef": new_path, "url": new_url})
 
     settings = dict(source.get("settings") or {})
+    end_card = settings.get("endCard")
+    if isinstance(end_card, dict) and end_card.get("imageRef"):
+        card_path, card_url = copy(end_card["imageRef"])
+        if card_path:
+            settings["endCard"] = {**end_card, "imageRef": card_path, "imageUrl": card_url}
+        else:
+            settings.pop("endCard", None)
     music = settings.get("music")
     if isinstance(music, dict) and music.get("storageRef"):
         new_path, new_url = copy(music["storageRef"])

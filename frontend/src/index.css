@@ -3190,3 +3190,7 @@ a:hover {
 .take-check-title { font-weight: 600; margin: 0 0 4px; }
 .take-check ul { margin: 0 0 6px; padding-left: 18px; }
 .take-check-said { margin: 0 0 4px; }
+
+/* End card (Finish step) */
+.end-card-fields { display: grid; gap: 6px; margin-top: 14px; }
+.end-card-fields .label { margin-top: 6px; margin-bottom: 0; }

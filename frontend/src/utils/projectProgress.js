@@ -316,6 +316,23 @@ export const MUSIC_VOLUME_OPTIONS = [
  * Returns '' when it is up to date (or unknown, for videos stitched before versioning),
  * otherwise a short reason. Pass the project to also catch music changes.
  */
+export const END_CARD_DEFAULT_SECONDS = 2.5;
+export const END_CARD_SECONDS = [2, 2.5, 3, 4];
+
+/** The closing card added after the last scene when stitching (settings.endCard), with defaults filled in. */
+export function projectEndCard(project) {
+  const card = project?.settings?.endCard;
+  const c = card && typeof card === 'object' ? card : {};
+  return {
+    enabled: Boolean(c.enabled),
+    imageRef: c.imageRef || '',
+    imageUrl: c.imageUrl || '',
+    headline: (c.headline || '').trim(),
+    subline: (c.subline || '').trim(),
+    seconds: typeof c.seconds === 'number' ? c.seconds : END_CARD_DEFAULT_SECONDS,
+  };
+}
+
 export function finalVideoChangeReason(finalVideo, scenes, project = null) {
   const used = finalVideo?.scenes;
   if (!used || !used.length || !scenes) return '';
@@ -355,6 +372,18 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
         && s.id in finalVideo.captionTexts
         && squash(finalVideo.captionTexts[s.id]) !== squash(sceneCaptionText(project, s)));
       if (edited) return 'The caption text changed since this version was stitched.';
+    }
+    // Versions stitched before end cards existed have no endCard field at all, so they aren't flagged.
+    if ('endCard' in finalVideo) {
+      const card = projectEndCard(project);
+      const now = card.enabled && card.imageRef
+        ? [card.imageRef, card.headline, card.subline, card.seconds].join('|')
+        : '';
+      const then = finalVideo.endCard
+        ? [finalVideo.endCard.imageRef, finalVideo.endCard.headline || '', finalVideo.endCard.subline || '',
+            finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
+        : '';
+      if (now !== then) return 'The end card changed since this version was stitched.';
     }
     if (typeof finalVideo.tightCuts === 'boolean' && finalVideo.tightCuts !== projectTightCuts(project)) {
       return 'The cut setting changed since this version was stitched.';

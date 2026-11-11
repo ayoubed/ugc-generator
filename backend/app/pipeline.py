@@ -227,6 +227,11 @@ def scene_audio_instruction(scene_audio: Optional[str]) -> str:
     return ""
 
 
+# Left alone, Omni tends to split one generation into several shots (its docs say so). A scene here
+# is one shot; cuts happen between scenes, where the app controls them.
+SINGLE_SHOT_INSTRUCTION = "Film this as a single continuous shot from one camera position. No scene cuts."
+
+
 def build_omni_generation_prompt(
     prompt: str,
     reference_descriptions: Optional[List[str]] = None,
@@ -241,7 +246,7 @@ def build_omni_generation_prompt(
     <FIRST_FRAME> / <IMAGE_REF_N> control tags.
     """
     refs = reference_descriptions or []
-    lines = [prompt.strip(), "", "Picture 1 is the first frame of the video."]
+    lines = [prompt.strip(), "", SINGLE_SHOT_INSTRUCTION, "", "Picture 1 is the first frame of the video."]
     if has_end_frame:
         lines.append("Picture 2 is the last frame of the video: the video ends on it.")
     if refs:
@@ -264,7 +269,7 @@ EXTEND_INSTRUCTION = (
 
 def build_omni_extend_prompt(prompt: str, scene_audio: Optional[str] = None) -> str:
     """Text of a request that continues the previous scene's video (see generate_scene_video)."""
-    lines = [EXTEND_INSTRUCTION, "", prompt.strip()]
+    lines = [EXTEND_INSTRUCTION, "", prompt.strip(), "", "Keep it one continuous shot. No scene cuts."]
     audio_line = scene_audio_instruction(scene_audio)
     if audio_line:
         lines += ["", audio_line]
@@ -1078,6 +1083,77 @@ def build_stitch_audio_filter(
     return ";".join(parts), total
 
 
+END_CARD_MIN_SECONDS, END_CARD_MAX_SECONDS, END_CARD_DEFAULT_SECONDS = 1.5, 5.0, 2.5
+
+
+def _ass_text(text: str) -> str:
+    return (text or "").replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
+
+
+def make_end_card(
+    image_path: str,
+    output_path: str,
+    width: int,
+    height: int,
+    fps: float,
+    seconds: float = END_CARD_DEFAULT_SECONDS,
+    headline: str = "",
+    subline: str = "",
+) -> str:
+    """
+    A closing clip (picture only, no sound) made from a real product picture: the picture sits in
+    the upper part over a blurred, darkened copy of itself, with the headline and a smaller line
+    under it. Generated scenes can get a label wrong; this frame is always right.
+    """
+    seconds = min(END_CARD_MAX_SECONDS, max(END_CARD_MIN_SECONDS, float(seconds or END_CARD_DEFAULT_SECONDS)))
+    work_dir = os.path.dirname(os.path.abspath(output_path))
+    unit = min(width, height) / 1080.0
+    box_w, box_h = int(width * 0.78) // 2 * 2, int(height * 0.46) // 2 * 2
+    top = int(height * 0.12)
+    filters = [
+        f"[0:v]split=2[bgsrc][fgsrc]",
+        f"[bgsrc]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+        f"boxblur=luma_radius={max(8, int(36 * unit))}:luma_power=2,eq=brightness=-0.22:saturation=0.85[bg]",
+        f"[fgsrc]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease[fg]",
+        f"[bg][fg]overlay=(W-w)/2:{top}+({box_h}-h)/2,setsar=1,format=yuv420p[card]",
+    ]
+    out_label = "[card]"
+    headline, subline = _ass_text(headline), _ass_text(subline)
+    if headline or subline:
+        def size(points: float) -> int:
+            return max(12, int(round(points * unit)))
+        margin_h = int(width * 0.08)
+        # Text block starts under the picture and stays above the area the apps' buttons cover.
+        y_head = top + box_h + int(height * 0.045)
+        y_sub = y_head + (size(84) * 2 + int(height * 0.02) if headline else 0)
+        ass = [
+            "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}", "WrapStyle: 0",
+            "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
+            "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
+            "MarginV, Encoding",
+            f"Style: Head,Montserrat,{size(76)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{size(4)},0,8,{margin_h},{margin_h},{y_head},1",
+            f"Style: Sub,Montserrat,{size(46)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{size(3)},0,8,{margin_h},{margin_h},{y_sub},1",
+            "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+        ]
+        end = f"0:00:{seconds + 1:05.2f}"
+        if headline:
+            ass.append(f"Dialogue: 0,0:00:00.00,{end},Head,,0,0,0,,{{\\fad(250,0)}}{headline}")
+        if subline:
+            ass.append(f"Dialogue: 0,0:00:00.00,{end},Sub,,0,0,0,,{{\\fad(250,0)}}{subline}")
+        with open(os.path.join(work_dir, "end_card.ass"), "w", encoding="utf-8") as f:
+            f.write("\n".join(ass) + "\n")
+        filters.append("[card]subtitles=filename=end_card.ass[cardtext]")
+        out_label = "[cardtext]"
+    _run_ffmpeg([
+        "ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", f"{fps:.3f}", "-t", f"{seconds:.3f}",
+        "-i", os.path.abspath(image_path), "-filter_complex", ";".join(filters), "-map", out_label, "-an",
+        "-r", f"{fps:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+        os.path.abspath(output_path),
+    ], "Making the end card", cwd=work_dir)
+    return output_path
+
+
 def stitch_videos(
     video_paths: List[str],
     output_path: str,
@@ -1087,9 +1163,12 @@ def stitch_videos(
     caption_texts: Optional[List[str]] = None,
     caption_style: Optional[str] = None,
     tight_cuts: bool = True,
+    end_card: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Stitches scene videos into one video. `labels` name the clips in error messages ("Scene 2").
+    end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
+    last scene (see make_end_card). It has no voice; the music carries through it.
 
     Picture: every clip is trimmed (with tight_cuts, the dead air before the first word and after the
     last one goes), brought to the same size and frame rate, joined, and encoded once. With a
@@ -1130,6 +1209,18 @@ def stitch_videos(
 
     work_dir = tempfile.mkdtemp(prefix="ugc_stitch_audio_")
     try:
+        if end_card and end_card.get("image_path") and os.path.exists(end_card["image_path"]):
+            card_path = make_end_card(
+                end_card["image_path"], os.path.join(work_dir, "end_card.mp4"), width, height, fps,
+                seconds=end_card.get("seconds") or END_CARD_DEFAULT_SECONDS,
+                headline=end_card.get("headline") or "", subline=end_card.get("subline") or "",
+            )
+            card = probe_media(card_path)
+            card.update({"gain_db": 0.0, "trim_start": 0.0, "speech": []})
+            video_paths = list(video_paths) + [card_path]
+            clips.append(card)
+            total_duration += max(0.05, card["duration"])
+
         # 1. Picture: trim, match size and frame rate, join, burn in the captions, encode once.
         video_parts: List[str] = []
         for i, clip in enumerate(clips):

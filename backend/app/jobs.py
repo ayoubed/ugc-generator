@@ -905,6 +905,23 @@ def _run_stitch_job_sync(
             doc_id: own_texts[doc_id] if isinstance(own_texts.get(doc_id), str) else str(data.get("script") or "")
             for _, doc_id, data in scenes_list
         }
+        # Optional closing card: a real product picture with a headline, after the last scene.
+        end_card = None
+        card = settings.get("endCard") if isinstance(settings.get("endCard"), dict) else {}
+        if card.get("enabled") and card.get("imageRef"):
+            _assert_owned_path(uid, card["imageRef"], "end card picture")
+            card_local = os.path.join(temp_dir, "end_card" + (os.path.splitext(card["imageRef"])[1].lower() or ".jpg"))
+            try:
+                download_file(card["imageRef"], card_local)
+            except Exception as e:
+                raise ValueError("Could not load the end card picture. Remove it or upload it again on the Finish step.") from e
+            end_card = {
+                "image_path": card_local,
+                "headline": str(card.get("headline") or "")[:80],
+                "subline": str(card.get("subline") or "")[:120],
+                "seconds": card.get("seconds") if isinstance(card.get("seconds"), (int, float)) else None,
+            }
+
         stitch_videos(
             local_video_paths,
             final_video_local,
@@ -914,6 +931,7 @@ def _run_stitch_job_sync(
             caption_texts=[caption_texts[doc_id] for _, doc_id, _ in scenes_list],
             caption_style=captions,
             tight_cuts=tight_cuts,
+            end_card=end_card,
         )
 
         # 3. Every stitch is a new version, so earlier final videos stay available.
@@ -950,6 +968,12 @@ def _run_stitch_job_sync(
             "captions": captions or "none",
             "captionTexts": caption_texts if captions else {},
             "tightCuts": tight_cuts,
+            "endCard": {
+                "imageRef": card["imageRef"],
+                "headline": end_card["headline"],
+                "subline": end_card["subline"],
+                "seconds": end_card["seconds"],
+            } if end_card else None,
         })
 
         # 4. Update project status to 'completed'
