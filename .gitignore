@@ -9,8 +9,11 @@ __pycache__/
 
 # Secrets & Configs
 .env
+# Service-account keys (never commit these)
 service_account.json
-*.json
+service-account.json
+*service-account*.json
+*service_account*.json
 
 # Temp media outputs
 *.mp4
@@ -20,3 +23,8 @@ service_account.json
 
 # OS files
 .DS_Store
+
+# Build output and local tooling
+node_modules/
+dist/
+*.apk

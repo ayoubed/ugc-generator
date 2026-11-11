@@ -12,3 +12,10 @@ __pycache__/
 *.jpeg
 service_account.json
 tmp/
+# Keys and local scripts never go into the image
+service-account.json
+service_account.json
+*service-account*.json
+*service_account*.json
+test_*.py
+list_*.py

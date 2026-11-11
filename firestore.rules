@@ -1,0 +1,189 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: Firebase Auth uid
+// Fields:
+//   - uid: string (required, must equal the document ID)
+//   - email: string (required, PII -> owner-only access)
+//   - displayName: string (required)
+//   - photoURL: string (optional)
+//   - createdAt: timestamp (required)
+//
+// Collection: projects
+// Document ID: auto-generated
+// Fields:
+//   - userId: string (required, immutable) - owner's auth uid
+//   - status: string (required, 'draft' on create; backend-managed afterwards)
+//   - title, idea: string (client-editable)
+//   - settings: map (client-editable)
+//   - startingImageRef: string (client-editable) - Storage path
+//   - globalImages: list (optional, client-editable, max 10 entries)
+//       entry: map {id: string, storageRef: string, url: string, description: string}
+//       (only list type + size are validated, not the entry shape)
+//   - createdAt: timestamp (set on create, immutable)
+//   - updatedAt: timestamp (client-editable)
+//   - any other fields: backend-owned (written via Admin SDK, read-only to client)
+//
+// Subcollection: projects/{projectId}/scenes
+// Document ID: scene index as a string ("0", "1", ...)
+// Fields:
+//   - index: int, videoStatus: string, createdAt: timestamp (set on create)
+//   - description, script, context, prompt: string (client-editable)
+//   - skipped: bool (optional, client-editable) - left out of the final video
+//   - imageSource: string (client-editable)
+//       one of 'uploaded' | 'last_frame' | 'ai_cut' | 'extend' | 'creator'
+//   - sceneImages: list (optional, client-editable, max 10 entries)
+//       same entry shape as projects.globalImages (only list type + size validated)
+//   - customStartImageRef: string | null (optional, client-editable)
+//       Storage path inside users/{uid}/, max 1024 chars ('' or null = cleared)
+//   - customStartImageUrl: string | null (optional, client-editable)
+//       http(s) URL, max 2048 chars ('' or null = cleared)
+//   - endImageRef / endImageUrl: string | null (optional, client-editable)
+//       picture the scene's video ends on; same checks as the custom start picture
+//   - any other fields (attempt, jobId, storageRef, ...): backend-owned
+//       (written via Admin SDK, read-only to client)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Context-image helpers ──
+    // Shared validation for the "context images" feature (projects + scenes).
+
+    // List of context-image entries, capped at 10 entries.
+    // Only list type + size are checked; entry shape is not validated.
+    function isValidImageList(value) {
+      return value is list && value.size() <= 10;
+    }
+
+    // Storage path inside the caller's own Storage area (users/{uid}/...),
+    // or a cleared value (null or ''). Stops the Admin-SDK backend from being
+    // pointed at another user's files.
+    function isClearedOrOwnStoragePath(value) {
+      return value == null
+          || (value is string
+              && (value == ''
+                  || (value.size() <= 1024
+                      && value.matches('^users/' + request.auth.uid + '/.+'))));
+    }
+
+    // http(s) URL, or a cleared value (null or '').
+    function isClearedOrHttpUrl(value) {
+      return value == null
+          || (value is string
+              && (value == ''
+                  || (value.size() <= 2048
+                      && value.matches('^https?://.+'))));
+    }
+
+    // ── Domain validators (called from BOTH create and update) ──
+    // `data` is request.resource.data. `written` is the set of keys the request
+    // writes: request.resource.data.keys() on create, and
+    // request.resource.data.diff(resource.data).affectedKeys() on update.
+    // Only fields being written are validated, so legacy / backend-written
+    // values in unrelated fields never cause a denial. A field removed by the
+    // write falls back to a permissive default via data.get().
+
+    function isValidProjectContextFields(data, written) {
+      return !written.hasAny(['globalImages'])
+          || isValidImageList(data.get('globalImages', []));
+    }
+
+    function isValidSceneContextFields(data, written) {
+      return (!written.hasAny(['sceneImages'])
+                || isValidImageList(data.get('sceneImages', [])))
+          && (!written.hasAny(['customStartImageRef'])
+                || isClearedOrOwnStoragePath(data.get('customStartImageRef', null)))
+          && (!written.hasAny(['customStartImageUrl'])
+                || isClearedOrHttpUrl(data.get('customStartImageUrl', null)))
+          && (!written.hasAny(['endImageRef'])
+                || isClearedOrOwnStoragePath(data.get('endImageRef', null)))
+          && (!written.hasAny(['endImageUrl'])
+                || isClearedOrHttpUrl(data.get('endImageUrl', null)))
+          && (!written.hasAny(['imageSource'])
+                || !('imageSource' in data)
+                || data.imageSource in ['uploaded', 'last_frame', 'ai_cut', 'extend', 'creator'])
+          && (!written.hasAny(['skipped'])
+                || data.get('skipped', false) is bool);
+    }
+
+    // ── Users ──
+    // Users can read/write only their own profile.
+    // The uid field must match the authenticated user.
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.keys().hasAll(['email', 'displayName', 'createdAt'])
+                    && request.resource.data.uid == uid;
+      allow update: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid;
+      allow delete: if false;
+    }
+
+    // ── Projects ──
+    // Users can CRUD their own projects.
+    // Client-writable fields: title, idea, settings, startingImageRef, globalImages, createdAt, updatedAt
+    // Backend-writable fields (read-only to client): status transitions are controlled
+    match /projects/{projectId} {
+      allow read: if request.auth != null
+                  && resource.data.userId == request.auth.uid;
+
+      allow create: if request.auth != null
+                    && request.resource.data.userId == request.auth.uid
+                    && request.resource.data.status == 'draft'
+                    // Context images, if supplied, must be valid
+                    && isValidProjectContextFields(request.resource.data,
+                                                   request.resource.data.keys());
+
+      allow update: if request.auth != null
+                    && resource.data.userId == request.auth.uid
+                    // Prevent client from changing ownership
+                    && request.resource.data.userId == resource.data.userId
+                    // Client can update these fields
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['title', 'idea', 'settings', 'startingImageRef', 'updatedAt',
+                                 'globalImages'])
+                    // Validate only the context-image fields actually being written
+                    && isValidProjectContextFields(request.resource.data,
+                                                   request.resource.data.diff(resource.data).affectedKeys());
+
+      allow delete: if request.auth != null
+                    && resource.data.userId == request.auth.uid;
+
+      // ── Scenes subcollection ──
+      // Client can edit content fields; backend owns status/job fields.
+      match /scenes/{sceneIndex} {
+        allow read: if request.auth != null
+                    && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid;
+
+        allow create: if request.auth != null
+                      && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid
+                      // imageSource / context-image fields, if supplied, must be valid
+                      && isValidSceneContextFields(request.resource.data,
+                                                   request.resource.data.keys());
+
+        // Client can only update description, script, context, prompt, imageSource, skipped
+        // and the context-image fields sceneImages, customStartImageRef, customStartImageUrl
+        allow update: if request.auth != null
+                      && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['description', 'script', 'context', 'prompt', 'imageSource', 'skipped',
+                                   'sceneImages', 'customStartImageRef', 'customStartImageUrl',
+                                   'endImageRef', 'endImageUrl'])
+                      // Validate only the fields actually being written
+                      && isValidSceneContextFields(request.resource.data,
+                                                   request.resource.data.diff(resource.data).affectedKeys());
+
+        allow delete: if request.auth != null
+                      && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid;
+      }
+    }
+  }
+}

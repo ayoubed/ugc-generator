@@ -1,0 +1,19 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.git
+.gitignore
+.env
+.pytest_cache/
+# Keys and local scripts never go into the image
+service-account.json
+service_account.json
+*service-account*.json
+*service_account*.json
+test_*.py
+list_*.py
