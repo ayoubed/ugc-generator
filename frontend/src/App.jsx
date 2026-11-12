@@ -16,6 +16,9 @@ import ExportPage from './pages/ExportPage';
  * Shown to a signed-in account that may not use the app: it is not on the allowlist, or the check
  * could not be made.
  */
+// Where someone without access can reach the team: the application form on the public site.
+const TEAM_CONTACT_URL = 'https://eleviat.com/#apply';
+
 function NoAccess() {
   const { user, access, signOut, retryAccessCheck } = useAuth();
   const denied = access === 'denied';
@@ -36,14 +39,17 @@ function NoAccess() {
         </h1>
         <p className="empty-state-text">
           {denied
-            ? `${user?.email || 'This Google account'} is not on the list of accounts that can use the app. Sign in with a different account, or ask for access.`
+            ? `${user?.email || 'This account'} isn\u2019t on the access list.`
             : 'The server could not be reached. Check your connection and try again.'}
         </p>
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          {denied && (
+            <a className="btn btn-primary" href={TEAM_CONTACT_URL} target="_blank" rel="noreferrer">Talk to the team</a>
+          )}
           {!denied && (
             <button type="button" className="btn btn-primary" onClick={retryAccessCheck}>Try again</button>
           )}
-          <button type="button" className={`btn ${denied ? 'btn-primary' : 'btn-secondary'}`} onClick={() => signOut()}>
+          <button type="button" className="btn btn-secondary" onClick={() => signOut()}>
             {denied ? 'Use a different account' : 'Sign out'}
           </button>
         </div>
