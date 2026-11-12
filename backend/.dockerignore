@@ -18,3 +18,6 @@ service_account.json
 test_*.py
 list_*.py
 .run-env.yaml
+tests/
+pytest.ini
+requirements-dev.txt

@@ -17,6 +17,12 @@ import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { isSceneBusy, maxReachableStep, sceneHasVideo, stepPath } from '../utils/projectProgress';
 import { normalizeAssetBible, sameAssetBible } from '../utils/assetBible';
+import {
+  MAX_STRUCTURE_SCENES,
+  breakdownParts,
+  formSettingsFromBreakdown,
+  structureForScript,
+} from '../utils/referenceVideo';
 
 import {
   ACCENTS,
@@ -120,42 +126,29 @@ function CreateIdea({ projectId: id }) {
   const currentBreakdown = () => (
     editedBreakdownRef.current !== undefined ? editedBreakdownRef.current : savedReference?.breakdown
   ) || null;
-  const followsReference = Boolean(savedReference?.use && savedReference?.breakdown?.scenes?.length);
+  const followsReference = Boolean(savedReference?.use && breakdownParts(savedReference?.breakdown).length);
 
   const handleBreakdownChange = (breakdown) => {
     // null = the video was removed or replaced: go back to what is saved.
     editedBreakdownRef.current = breakdown || undefined;
-    if (followsReference && breakdown?.scenes?.length) setNumScenes(Math.min(10, breakdown.scenes.length));
+    if (followsReference && breakdownParts(breakdown).length) {
+      setNumScenes(Math.min(MAX_STRUCTURE_SCENES, breakdownParts(breakdown).length));
+    }
   };
 
   /** Fills in the form from the reference video's breakdown. */
   const applyReference = () => {
-    const breakdown = currentBreakdown();
-    const parts = breakdown?.scenes || [];
-    if (!parts.length) return;
-    setNumScenes(Math.min(10, parts.length));
-    if (breakdown.hook) {
+    const filled = formSettingsFromBreakdown(currentBreakdown(), { durationOptions, currentDuration: duration });
+    if (!filled) return;
+    setNumScenes(filled.numScenes);
+    if (filled.hook) {
       setHookStyle('Custom Hook');
-      setCustomHookDesc(breakdown.hook);
+      setCustomHookDesc(filled.hook);
     }
-    // One scene length for the whole video: the typical part, within what the model can make.
-    const lengths = parts.map((p) => Number(p.end) - Number(p.start)).filter((n) => n > 0).sort((a, b) => a - b);
-    const typical = lengths.length ? lengths[Math.floor(lengths.length / 2)] : duration;
-    const sceneSeconds = durationOptions.reduce(
-      (best, option) => (Math.abs(option - typical) < Math.abs(best - typical) ? option : best),
-      durationOptions[0],
-    );
-    setDuration(sceneSeconds);
-    // Their speaking pace, kept within what a generated speaker says clearly.
-    const pace = Math.min(3, Math.max(2, Number(breakdown.wordsPerSecond) || 2.5));
-    setWordsPerScene(Math.round(sceneSeconds * pace));
+    setDuration(filled.duration);
+    setWordsPerScene(filled.wordsPerScene);
     setWordsCustomized(true);
-    const style = breakdown.style || {};
-    const styleKeys = { camera: 'camera', lighting: 'lighting', action: 'action', scriptTone: 'script_tone', visual: 'visual', audio: 'audio' };
-    Object.entries(styleKeys).forEach(([key, styleKey]) => {
-      const tags = (style[styleKey] || []).filter(Boolean);
-      if (tags.length) guidelineState[key][1](tags);
-    });
+    Object.entries(filled.tags).forEach(([key, tags]) => guidelineState[key][1](tags));
   };
 
   // Execution state
@@ -465,18 +458,7 @@ function CreateIdea({ projectId: id }) {
           audio_consistency: audioTags,
           accent,
         },
-        // Their words (the "said" field) are left out on purpose: only the structure is followed.
-        structure: followsReference && currentBreakdown()?.scenes?.length
-          ? {
-            scenes: currentBreakdown().scenes.slice(0, 10).map((part) => ({
-              purpose: part.purpose || '',
-              happens: part.happens || '',
-              framing: part.framing || '',
-            })),
-            pacing: currentBreakdown().pacing || '',
-            call_to_action: currentBreakdown().call_to_action || '',
-          }
-          : null,
+        structure: followsReference ? structureForScript(currentBreakdown()) : null,
       });
 
       // Navigate to Step 2: Edit Scenes
