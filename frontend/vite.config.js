@@ -4,6 +4,11 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Component tests (*.test.jsx) render in a simulated browser; plain *.test.js files don't need one.
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js'],
+  },
   server: {
     proxy: {
       '/api': {
