@@ -3194,3 +3194,24 @@ a:hover {
 /* End card (Finish step) */
 .end-card-fields { display: grid; gap: 6px; margin-top: 14px; }
 .end-card-fields .label { margin-top: 6px; margin-bottom: 0; }
+
+/* Reference video (Idea page): the video next to its breakdown */
+.ref-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.ref-video video { width: 100%; max-height: 340px; border-radius: var(--radius-btn); background: #000; display: block; }
+.ref-video { position: sticky; top: 84px; }
+.ref-video-actions { display: flex; gap: var(--space-3); margin-top: 6px; }
+.ref-main { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.ref-breakdown { display: flex; flex-direction: column; gap: 6px; }
+.ref-breakdown .label { margin-bottom: 0; }
+.ref-summary { margin: 0 0 6px; font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; }
+.ref-parts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.ref-part { display: flex; flex-direction: column; gap: 6px; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-btn); background: var(--bg-card); }
+.ref-part-head { display: flex; align-items: center; gap: var(--space-2); }
+.ref-part-head .export-pill { flex-shrink: 0; white-space: nowrap; }
+.ref-part-purpose { flex: 1; min-width: 0; font-weight: 600; }
+.ref-said { margin: 0; font-size: 0.75rem; font-style: italic; color: var(--text-tertiary); line-height: 1.45; }
+.ref-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+@media (max-width: 720px) {
+  .ref-layout { grid-template-columns: 1fr; }
+  .ref-video { position: static; max-width: 200px; }
+}

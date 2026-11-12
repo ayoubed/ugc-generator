@@ -27,7 +27,7 @@ export default function MusicCard({ project, now, disabled = false }) {
   const musicError = project?.musicStatus === 'failed' ? project?.musicError || '' : '';
 
   const [mode, setMode] = useState(null); // null | 'generate'
-  const [prompt, setPrompt] = useState(project?.musicPrompt || '');
+  const [prompt, setPrompt] = useState(project?.musicPrompt || project?.settings?.reference?.breakdown?.music_mood || '');
   const [modelId, setModelId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

@@ -7,6 +7,7 @@ import ReferenceImageUploader from '../components/ReferenceImageUploader';
 import TagInput from '../components/TagInput';
 import LoadingSpinner from '../components/LoadingSpinner';
 import AssetBibleCard from '../components/AssetBibleCard';
+import ReferenceVideoCard from '../components/ReferenceVideoCard';
 import { useAuth } from '../hooks/useAuth';
 import { useProject, useScenes, updateProject, saveProjectWithSettings } from '../hooks/useProject';
 import SaveIndicator from '../components/SaveIndicator';
@@ -110,6 +111,51 @@ function CreateIdea({ projectId: id }) {
   };
   const clearGuidelines = () => {
     Object.values(guidelineState).forEach(([, setTags]) => setTags([]));
+  };
+
+  // Reference video (see ReferenceVideoCard). The card reports every edit of the breakdown here, so
+  // the script is written from the latest text even before it is saved.
+  const editedBreakdownRef = useRef(undefined);
+  const savedReference = project?.settings?.reference || null;
+  const currentBreakdown = () => (
+    editedBreakdownRef.current !== undefined ? editedBreakdownRef.current : savedReference?.breakdown
+  ) || null;
+  const followsReference = Boolean(savedReference?.use && savedReference?.breakdown?.scenes?.length);
+
+  const handleBreakdownChange = (breakdown) => {
+    // null = the video was removed or replaced: go back to what is saved.
+    editedBreakdownRef.current = breakdown || undefined;
+    if (followsReference && breakdown?.scenes?.length) setNumScenes(Math.min(10, breakdown.scenes.length));
+  };
+
+  /** Fills in the form from the reference video's breakdown. */
+  const applyReference = () => {
+    const breakdown = currentBreakdown();
+    const parts = breakdown?.scenes || [];
+    if (!parts.length) return;
+    setNumScenes(Math.min(10, parts.length));
+    if (breakdown.hook) {
+      setHookStyle('Custom Hook');
+      setCustomHookDesc(breakdown.hook);
+    }
+    // One scene length for the whole video: the typical part, within what the model can make.
+    const lengths = parts.map((p) => Number(p.end) - Number(p.start)).filter((n) => n > 0).sort((a, b) => a - b);
+    const typical = lengths.length ? lengths[Math.floor(lengths.length / 2)] : duration;
+    const sceneSeconds = durationOptions.reduce(
+      (best, option) => (Math.abs(option - typical) < Math.abs(best - typical) ? option : best),
+      durationOptions[0],
+    );
+    setDuration(sceneSeconds);
+    // Their speaking pace, kept within what a generated speaker says clearly.
+    const pace = Math.min(3, Math.max(2, Number(breakdown.wordsPerSecond) || 2.5));
+    setWordsPerScene(Math.round(sceneSeconds * pace));
+    setWordsCustomized(true);
+    const style = breakdown.style || {};
+    const styleKeys = { camera: 'camera', lighting: 'lighting', action: 'action', scriptTone: 'script_tone', visual: 'visual', audio: 'audio' };
+    Object.entries(styleKeys).forEach(([key, styleKey]) => {
+      const tags = (style[styleKey] || []).filter(Boolean);
+      if (tags.length) guidelineState[key][1](tags);
+    });
   };
 
   // Execution state
@@ -419,6 +465,18 @@ function CreateIdea({ projectId: id }) {
           audio_consistency: audioTags,
           accent,
         },
+        // Their words (the "said" field) are left out on purpose: only the structure is followed.
+        structure: followsReference && currentBreakdown()?.scenes?.length
+          ? {
+            scenes: currentBreakdown().scenes.slice(0, 10).map((part) => ({
+              purpose: part.purpose || '',
+              happens: part.happens || '',
+              framing: part.framing || '',
+            })),
+            pacing: currentBreakdown().pacing || '',
+            call_to_action: currentBreakdown().call_to_action || '',
+          }
+          : null,
       });
 
       // Navigate to Step 2: Edit Scenes
@@ -512,6 +570,14 @@ function CreateIdea({ projectId: id }) {
           >
             {/* Left Column: Main Form */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <ReferenceVideoCard
+                project={project}
+                storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
+                onApply={applyReference}
+                onBreakdownChange={handleBreakdownChange}
+                disabled={generating}
+              />
+
               <div className="card card-white">
                 <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '16px' }}>
                   Core Video Concept
@@ -597,8 +663,14 @@ function CreateIdea({ projectId: id }) {
                       min={1}
                       max={10}
                       value={numScenes}
+                      disabled={followsReference}
                       onChange={(e) => setNumScenes(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)))}
                     />
+                    {followsReference && (
+                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)' }}>
+                        One scene per part of the reference video
+                      </span>
+                    )}
                   </div>
 
                   {/* Words per scene */}

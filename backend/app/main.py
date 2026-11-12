@@ -87,6 +87,7 @@ from app.routes.stitch import router as stitch_router
 from app.routes.models import router as models_router
 from app.routes.music import router as music_router
 from app.routes.projects import router as projects_router
+from app.routes.reference import router as reference_router
 
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(scenes_router, prefix="/api", tags=["Scenes"])
@@ -95,6 +96,7 @@ app.include_router(stitch_router, prefix="/api", tags=["Stitch"])
 app.include_router(models_router, prefix="/api", tags=["Models"])
 app.include_router(music_router, prefix="/api", tags=["Music"])
 app.include_router(projects_router, prefix="/api", tags=["Projects"])
+app.include_router(reference_router, prefix="/api", tags=["Reference"])
 
 
 if __name__ == "__main__":

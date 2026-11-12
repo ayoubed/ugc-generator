@@ -172,6 +172,14 @@ def duplicate_project_endpoint(
             settings["endCard"] = {**end_card, "imageRef": card_path, "imageUrl": card_url}
         else:
             settings.pop("endCard", None)
+    # The reference video's breakdown is kept; the video itself is copied when possible.
+    reference = settings.get("reference")
+    if isinstance(reference, dict):
+        ref_path, ref_url = copy(reference.get("storageRef"))
+        if ref_path:
+            settings["reference"] = {**reference, "storageRef": ref_path, "url": ref_url}
+        else:
+            settings.pop("reference", None)
     music = settings.get("music")
     if isinstance(music, dict) and music.get("storageRef"):
         new_path, new_url = copy(music["storageRef"])

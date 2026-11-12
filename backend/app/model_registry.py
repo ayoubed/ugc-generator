@@ -60,6 +60,10 @@ DEFAULT_MUSIC_MODEL_ID = MUSIC_MODELS[0]["id"]
 # enough: it costs a fraction of the take it checks.
 TAKE_CHECK_MODEL_ID = "gemini-2.5-flash"
 
+# Watches a reference video once per project and breaks its structure down
+# (see pipeline.analyse_reference_video).
+REFERENCE_MODEL_ID = "gemini-2.5-pro"
+
 # Draws the first frame of a scene that cuts to a new camera position (see pipeline.generate_cut_still).
 STILL_MODEL_ID = "gemini-3.1-flash-image"
 

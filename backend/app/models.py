@@ -62,6 +62,55 @@ class TakeCheckResult(BaseModel):
     issues: List[TakeIssue] = Field(default_factory=list, description="Clear, visible or audible problems only. Empty when the take is fine.")
 
 
+# Structured output of the reference-video breakdown (see pipeline.analyse_reference_video)
+class ReferenceScene(BaseModel):
+    start: float = Field(description="Second at which this part starts.")
+    end: float = Field(description="Second at which this part ends.")
+    purpose: str = Field(description="The job this part does in the ad, in a few words, without naming the product (e.g. 'Calls out the pain point', 'Shows the result', 'Asks to buy').")
+    said: str = Field(default="", description="Exactly what is said in this part, word for word. Empty if nobody speaks.")
+    happens: str = Field(description="What visibly happens, in one sentence.")
+    framing: str = Field(default="", description="How it is filmed: shot size, angle, camera movement, where the person and product are.")
+
+
+class ReferenceStyle(BaseModel):
+    camera: List[str] = Field(default_factory=list, description="Up to 3 short instructions: device, framing, camera movement.")
+    lighting: List[str] = Field(default_factory=list, description="Up to 3: light source, time of day, colour treatment.")
+    action: List[str] = Field(default_factory=list, description="Up to 3: what the person does on camera and how they come across.")
+    script_tone: List[str] = Field(default_factory=list, description="Up to 3: how the words sound (voice, energy, selling style).")
+    visual: List[str] = Field(default_factory=list, description="Up to 3: setting, background, editing pace.")
+    audio: List[str] = Field(default_factory=list, description="Up to 3: voice quality, room sound.")
+
+
+class ReferenceBreakdown(BaseModel):
+    summary: str = Field(description="One or two sentences: what kind of ad this is and why it holds attention.")
+    hook_type: str = Field(description="One of: The Snippet, The Question, The On-Screen Text, The You-Feature, The Quick Cuts, Other.")
+    hook: str = Field(description="How the first seconds grab attention, written as an instruction another video about a different product could follow. Do not name this ad's product or brand and do not quote its words.")
+    scenes: List[ReferenceScene]
+    pacing: str = Field(default="", description="One sentence on rhythm: how fast it is cut and spoken.")
+    caption_style: str = Field(default="", description="How on-screen captions look, or 'No captions'.")
+    music_mood: str = Field(default="", description="The background music as a short brief a composer could follow (genre, mood, tempo, instruments). Empty if there is no music.")
+    call_to_action: str = Field(default="", description="How the ad closes and what it asks the viewer to do, without naming the product or brand.")
+    style: ReferenceStyle = Field(default_factory=ReferenceStyle)
+
+
+class AnalyseReferenceRequest(BaseModel):
+    storage_ref: str = Field(..., max_length=1024)
+    name: Optional[str] = Field(default="", max_length=200)
+
+
+class ScriptStructureScene(BaseModel):
+    """One part of a reference video's structure. The reference's spoken words are never included."""
+    purpose: str = Field(default="", max_length=300)
+    happens: str = Field(default="", max_length=600)
+    framing: str = Field(default="", max_length=400)
+
+
+class ScriptStructure(BaseModel):
+    scenes: List[ScriptStructureScene] = Field(default_factory=list, max_length=10)
+    pacing: str = Field(default="", max_length=400)
+    call_to_action: str = Field(default="", max_length=400)
+
+
 class ExtractAssetsRequest(BaseModel):
     idea: str
     llm_model: Optional[str] = None  # None = the default script model
@@ -101,6 +150,8 @@ class GenerateScenesRequest(BaseModel):
     llm_model: str = "gemini-2.5-pro"
     guidelines: Optional[SceneGuidelines] = None
     asset_bible: Optional[AssetBible] = None
+    # The structure of a reference video to follow, scene by scene (sets the number of scenes).
+    structure: Optional[ScriptStructure] = None
 
     @model_validator(mode="before")
     @classmethod

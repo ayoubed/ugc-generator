@@ -13,9 +13,10 @@ import cv2
 from google import genai
 from google.genai import types
 import difflib
-from app.models import Scene, SceneList, AssetBible, TakeCheckResult
-from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID
+from app.models import Scene, SceneList, AssetBible, TakeCheckResult, ReferenceBreakdown
+from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID, REFERENCE_MODEL_ID
 from app.captions import build_ass, word_timings
+from app.beats import music_fit_for_cuts
 
 logger = logging.getLogger(__name__)
 
@@ -292,9 +293,13 @@ def generate_script_and_scenes(
     target_words_per_scene: int = 20,
     context_image_descriptions: Optional[List[str]] = None,
     asset_bible: Optional[Dict[str, str]] = None,
+    structure: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Writes the video context and the scenes from a user idea.
+
+    `structure` is the breakdown of a reference video (see analyse_reference_video) without its
+    spoken words: the script then follows it part by part and has as many scenes as it has parts.
 
     Returns {"video_context": str, "scenes": [scene dicts]}.
     The guidelines come only from the user (the Idea page). Nothing is added when one is empty.
@@ -363,11 +368,44 @@ def generate_script_and_scenes(
     else:
         asset_bible_section = ""
 
+    structure_scenes = [
+        sc for sc in ((structure or {}).get("scenes") or [])
+        if isinstance(sc, dict) and (str(sc.get("purpose") or "").strip() or str(sc.get("happens") or "").strip())
+    ][:10]
+    if structure_scenes:
+        num_scenes = len(structure_scenes)
+        part_lines = []
+        for n, sc in enumerate(structure_scenes, start=1):
+            bits = [f"Job: {str(sc.get('purpose') or '').strip() or 'not given'}"]
+            if str(sc.get("happens") or "").strip():
+                bits.append(f"In the reference: {str(sc['happens']).strip()}")
+            if str(sc.get("framing") or "").strip():
+                bits.append(f"Filmed as: {str(sc['framing']).strip()}")
+            part_lines.append(f"    - Scene {n}. " + " | ".join(bits))
+        extra = []
+        if str((structure or {}).get("pacing") or "").strip():
+            extra.append(f"    Rhythm: {str(structure['pacing']).strip()}")
+        if str((structure or {}).get("call_to_action") or "").strip():
+            extra.append(f"    How it closes: {str(structure['call_to_action']).strip()}")
+        structure_section = f"""
+    STRUCTURE TO FOLLOW (from a reference ad for a DIFFERENT product):
+{chr(10).join(part_lines)}
+{chr(10).join(extra)}
+    Scene N of your script does the same job as scene N above, in the same order, and is filmed the
+    same way (put that in the scene's context). Copy the structure only:
+    - Write every line fresh, for the user's idea and product. Never reuse or paraphrase the
+      reference's wording, and never mention its product, brand, people or place.
+    - Replace what happens in the reference with the equivalent action for the user's product.
+    """
+    else:
+        structure_section = ""
+
     prompt = f"""
     You are a creative director for a UGC (User Generated Content) video.
     The user wants to make a video based on this idea: "{idea}"
     {context_pictures_section}
     {asset_bible_section}
+    {structure_section}
     HOOK REQUIREMENT:
     {hook_instruction}
     
@@ -412,6 +450,64 @@ def generate_script_and_scenes(
         "video_context": str(data.get("video_context") or "").strip(),
         "scenes": data.get("scenes", []),
     }
+
+
+REFERENCE_MAX_PARTS = 10
+
+
+def analyse_reference_video(video_path: str, mime_type: str = "video/mp4") -> Dict[str, Any]:
+    """
+    Watches a reference ad (e.g. a competitor's video that works) and returns its structure as a
+    ReferenceBreakdown dict: hook, the parts it is made of, pacing, captions, music mood, call to
+    action and style tags. Adds `seconds` (length of the video) and `wordsPerSecond` (speaking pace).
+
+    Only the structure is used later. The transcript is shown to the user and never sent to the
+    script writer; no frame of the video is ever used as a picture.
+    """
+    client = get_client()
+    video_file = upload_to_files_api(client, video_path, mime_type, timeout_seconds=300)
+    prompt = f"""
+    You are breaking down a short video ad so that its structure can be reused for a different product.
+    Watch and listen to all of it.
+
+    Split it into the parts a script would have: each part does one job (hook, problem, product
+    reveal, proof, demonstration, offer, call to action...). A part is 4 to 10 seconds long: merge a
+    shorter moment into the part next to it. Several
+    quick shots that do one job together are ONE part. Use at most {REFERENCE_MAX_PARTS} parts; the
+    parts cover the whole video in order with no gaps.
+
+    For each part give the start and end second, its job, exactly what is said, what happens and how
+    it is filmed. Then describe the hook, pacing, captions, music and call to action, and the style
+    as short instructions a video model could follow (e.g. "Shot on a phone front camera",
+    "Soft window light", "Talks fast, like to a friend").
+
+    Report only what is in the video. Leave a field empty rather than guessing.
+    """
+    response = client.models.generate_content(
+        model=REFERENCE_MODEL_ID,
+        contents=[video_file, prompt],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=ReferenceBreakdown,
+            temperature=0.2,
+        ),
+    )
+    data = ReferenceBreakdown.model_validate(_parse_json_response(response.text)).model_dump()
+    data["scenes"] = data["scenes"][:REFERENCE_MAX_PARTS]
+    for key, tags in data["style"].items():
+        data["style"][key] = [str(t).strip()[:80] for t in tags if str(t).strip()][:3]
+
+    try:
+        seconds = float(probe_media(video_path).get("duration") or 0.0)
+    except Exception:
+        seconds = 0.0
+    if seconds <= 0 and data["scenes"]:
+        seconds = float(data["scenes"][-1]["end"])
+    spoken_words = sum(len(_words(sc["said"])) for sc in data["scenes"])
+    spoken_seconds = sum(max(0.0, sc["end"] - sc["start"]) for sc in data["scenes"] if sc["said"].strip())
+    data["seconds"] = round(seconds, 1)
+    data["wordsPerSecond"] = round(spoken_words / spoken_seconds, 2) if spoken_seconds > 0 else 0.0
+    return data
 
 
 def _words(text: str) -> List[str]:
@@ -1025,12 +1121,16 @@ def build_stitch_audio_filter(
     music_volume: str = "medium",
     music_gain_db: float = 0.0,
     room_tone: bool = False,
+    music_start: float = 0.0,
+    music_tempo: float = 1.0,
 ) -> Tuple[str, float]:
     """
     ffmpeg filter graph for the stitched audio, before the final loudness pass.
     Input i is clip i (each clip dict has duration, has_audio and gain_db, plus trim_start when the
     clip's start is cut); music is its own input. `room_tone` adds a very quiet, constant background
     under everything so the silence between scenes doesn't drop to dead air.
+    `music_tempo` plays the music slightly faster or slower and `music_start` then skips that many
+    seconds of it, so its beats land on the cuts (see app.beats).
     Returns (filter_complex, total_duration). The output label is [aout].
     """
     parts: List[str] = []
@@ -1060,9 +1160,11 @@ def build_stitch_audio_filter(
         vol = MUSIC_VOLUMES.get(music_volume, MUSIC_VOLUMES["medium"])
         fade_in = min(0.5, total / 4)
         fade_out = min(1.5, total / 3)
+        tempo = f"atempo={music_tempo:.4f}," if abs(music_tempo - 1.0) > 1e-4 else ""
         parts.append(
             f"[{music_input_index}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
-            f"atrim=0:{total:.3f},asetpts=PTS-STARTPTS,volume={music_gain_db:.2f}dB,volume={vol},"
+            f"{tempo}atrim={music_start:.3f}:{music_start + total:.3f},asetpts=PTS-STARTPTS,"
+            f"volume={music_gain_db:.2f}dB,volume={vol},"
             f"afade=t=in:st=0:d={fade_in:.3f},afade=t=out:st={max(0.0, total - fade_out):.3f}:d={fade_out:.3f}[music]"
         )
         # Ducking: the voice drives a compressor on the music, so the music dips while someone talks.
@@ -1263,6 +1365,7 @@ def stitch_videos(
             cmd += ["-i", vp]
         music_index = None
         music_gain = 0.0
+        music_start, music_tempo = 0.0, 1.0
         if music_path:
             if not probe_media(music_path)["has_audio"]:
                 raise ValueError("The music file has no audio in it.")
@@ -1270,11 +1373,20 @@ def stitch_videos(
             if music_stats:
                 music_index = len(video_paths)
                 music_gain = _gain_to(SCENE_LOUDNESS_LUFS, music_stats)
+                # Start the music a fraction of a beat in, so its beats fall on the scene changes.
+                cuts, at = [], 0.0
+                for clip in clips[:-1]:
+                    at += max(0.05, clip["duration"])
+                    cuts.append(at)
+                music_start, music_tempo, beat_note = music_fit_for_cuts(music_path, cuts)
+                if beat_note:
+                    logger.info("Music and cuts: %s", beat_note)
                 cmd += ["-stream_loop", "-1", "-i", music_path]  # loops short tracks to cover the video
 
         # Room tone only when something is heard: in a silent video the final loudness pass would turn it up.
         filter_complex, total = build_stitch_audio_filter(
-            clips, music_index, music_volume, music_gain, room_tone=any_sound
+            clips, music_index, music_volume, music_gain, room_tone=any_sound, music_start=music_start,
+            music_tempo=music_tempo,
         )
         mix_path = os.path.join(work_dir, "mix.wav")
         cmd += ["-filter_complex", filter_complex, "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", mix_path]

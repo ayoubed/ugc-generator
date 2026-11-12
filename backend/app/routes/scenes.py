@@ -136,6 +136,7 @@ def generate_scenes_endpoint(
             target_words_per_scene=request.target_words_per_scene,
             context_image_descriptions=context_image_descriptions,
             asset_bible=asset_bible_dict,
+            structure=request.structure.model_dump() if request.structure else None,
         )
     except Exception as e:
         logger.exception(f"Failed to generate scenes with Gemini: {e}")

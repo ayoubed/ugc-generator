@@ -309,6 +309,17 @@ export async function duplicateProject(projectId) {
   return { id: data.project_id, hasScript: Boolean(data.scenes) };
 }
 
+/**
+ * Break down an uploaded reference video (watch project.referenceStatus; the result lands in
+ * project.settings.reference.breakdown).
+ */
+export function analyseReference(projectId, storageRef, name = '') {
+  return callApi(`/api/projects/${projectId}/reference/analyse`, {
+    body: { storage_ref: storageRef, name },
+    fallback: 'Could not start the breakdown',
+  });
+}
+
 /** Delete a project with its scenes and files; running takes are stopped. */
 export function deleteProjectEverywhere(projectId) {
   return callApi(`/api/projects/${projectId}`, { method: 'DELETE', fallback: 'Could not delete the project' });
