@@ -44,6 +44,9 @@ const HOOK_STYLES = [
   'Custom Hook',
 ];
 
+// Same width as the two-column layout in index.css (.idea-columns).
+const DESKTOP_QUERY = '(min-width: 1100px)';
+
 function CreateIdea({ projectId: id }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -541,6 +544,8 @@ function CreateIdea({ projectId: id }) {
         {error && <p className="page-alert" role="alert">{error}</p>}
 
         <form className="idea-form" onSubmit={handleGenerateScenes}>
+          <div className="idea-columns">
+          <div className="idea-main">
           <section className="card card-white" aria-labelledby="idea-heading">
             <div className="form-group">
               <label className="label idea-label" id="idea-heading" htmlFor="idea-text">Your idea</label>
@@ -674,7 +679,9 @@ function CreateIdea({ projectId: id }) {
             onBreakdownChange={handleBreakdownChange}
             disabled={generating}
           />
+          </div>
 
+          <aside className="idea-side" aria-label="Options">
           <Disclosure
             title="Consistent details"
             note={detailsFilled ? `${detailsFilled} of 4 filled in` : 'Written for you with the script'}
@@ -689,7 +696,7 @@ function CreateIdea({ projectId: id }) {
             />
           </Disclosure>
 
-          <Disclosure title="Script options" note={`${hookSummary} · ${wordsPerScene} words per scene`}>
+          <Disclosure openOnDesktop title="Script options" note={`${hookSummary} · ${wordsPerScene} words per scene`}>
             <div className="field-grid">
               <div className="form-group">
                 <label className="label" htmlFor="idea-hook">Hook</label>
@@ -835,6 +842,8 @@ function CreateIdea({ projectId: id }) {
               </p>
             )}
           </Disclosure>
+          </aside>
+          </div>
 
           {confirmingRegenerate && (
             <div className="gen-note is-warning" role="alertdialog" aria-labelledby="regen-title" style={{ padding: '14px 16px' }}>
@@ -878,9 +887,11 @@ function CreateIdea({ projectId: id }) {
 }
 
 /** A section that stays folded until asked for, with a one-line summary of what is inside. */
-function Disclosure({ title, note, children }) {
+function Disclosure({ title, note, openOnDesktop = false, children }) {
+  // Read once: resizing the window afterwards never folds a section someone is working in.
+  const [startsOpen] = useState(() => openOnDesktop && Boolean(window.matchMedia?.(DESKTOP_QUERY).matches));
   return (
-    <details className="card card-white disclosure">
+    <details className="card card-white disclosure" open={startsOpen || undefined}>
       <summary>
         <span className="disclosure-title">{title}</span>
         {note && <span className="disclosure-note">{note}</span>}

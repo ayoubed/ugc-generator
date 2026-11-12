@@ -11,6 +11,7 @@ from typing import Optional
 MAX_LENGTH = 300
 
 _CONTENT_WORDS = ("safety", "blocked", "prohibited", "policy", "harm", "sensitive")
+_KEY_WORDS = ("api key", "api_key_invalid", "api_key")
 _QUOTA_WORDS = ("quota", "rate limit", "resource_exhausted", "resource exhausted", "too many requests")
 
 
@@ -24,6 +25,8 @@ def _model_error(code: Optional[int], text: str) -> Optional[str]:
     lowered = text.lower()
     if code == 429 or any(word in lowered for word in _QUOTA_WORDS):
         return "The model is busy or its usage limit was reached. Wait a minute and try again."
+    if any(word in lowered for word in _KEY_WORDS):
+        return "The model service rejected the app's key. This has to be fixed on the server."
     if any(word in lowered for word in _CONTENT_WORDS):
         return "The model refused this because of its content rules. Reword it and try again."
     if code in (401, 403):

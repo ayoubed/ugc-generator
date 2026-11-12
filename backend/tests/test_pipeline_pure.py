@@ -144,3 +144,25 @@ def test_image_type_comes_from_the_file_header(tmp_path):
     assert pipeline.detect_image_mime(str(png)) == "image/png"
     assert pipeline.detect_image_mime(str(tmp_path / "missing.webp")) == "image/webp"
     assert pipeline.detect_image_mime(str(tmp_path / "missing")) == "image/jpeg"
+
+
+@pytest.mark.parametrize("saved", ['abc123', '"abc123"', "'abc123'", '  abc123\n', ' "abc123" '])
+def test_the_model_key_works_when_saved_with_quote_marks_or_spaces(saved, monkeypatch):
+    """A key pasted into the server's settings with quote marks used to be refused by the model."""
+    from app import pipeline
+
+    seen = {}
+    monkeypatch.setenv("API_PROVIDER", "AI_STUDIO")
+    monkeypatch.setenv("GEMINI_API_KEY", saved)
+    monkeypatch.setattr(pipeline.genai, "Client", lambda **kwargs: seen.update(kwargs) or "client")
+    assert pipeline.get_client() == "client"
+    assert seen["api_key"] == "abc123"
+
+
+def test_a_missing_model_key_is_reported(monkeypatch):
+    from app import pipeline
+
+    monkeypatch.setenv("API_PROVIDER", "AI_STUDIO")
+    monkeypatch.setenv("GEMINI_API_KEY", '""')
+    with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+        pipeline.get_client()

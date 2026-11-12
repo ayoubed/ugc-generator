@@ -252,3 +252,31 @@ describe('Idea step: saving as you type', () => {
     expect(saved.title).toBe('A mug that keeps coffee hot all day. Filmed in ...');
   });
 });
+
+describe('Idea step: layout', () => {
+  const sectionOpen = (title) => screen.getByText(title).closest('details').open;
+
+  it('keeps the options together, folded, on a phone', async () => {
+    open();
+    await formLoaded();
+    const options = within(screen.getByRole('complementary', { name: 'Options' }));
+    ['Consistent details', 'Script options', 'Style details', 'Models and quality'].forEach((title) => {
+      expect(options.getByText(title)).toBeTruthy();
+      expect(sectionOpen(title)).toBe(false);
+    });
+    // The idea, the pictures and the reference video are not in the options column.
+    expect(options.queryByRole('textbox', { name: 'Your idea' })).toBeNull();
+  });
+
+  it('shows the script options unfolded in the sidebar on a desktop screen', async () => {
+    window.matchMedia = (query) => ({ matches: query === '(min-width: 1100px)', addEventListener() {}, removeEventListener() {} });
+    try {
+      open();
+      await formLoaded();
+      expect(sectionOpen('Script options')).toBe(true);
+      expect(sectionOpen('Style details')).toBe(false);
+    } finally {
+      delete window.matchMedia;
+    }
+  });
+});

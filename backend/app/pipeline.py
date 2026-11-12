@@ -52,6 +52,11 @@ def generate_music(prompt: str, output_path: str, music_model: Optional[str] = N
     return output_path, getattr(audio, "mime_type", None) or "audio/mpeg"
 
 
+def clean_api_key(value: Optional[str]) -> str:
+    """The key without the spaces or quote marks that a settings file or a shell can leave around it."""
+    return (value or "").strip().strip("\"'").strip()
+
+
 def get_client() -> genai.Client:
     """
     Returns a Google GenAI Client configured for either AI Studio (API key)
@@ -71,7 +76,7 @@ def get_client() -> genai.Client:
             http_options={"api_version": "v1beta1"},
         )
     else:
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = clean_api_key(os.environ.get("GEMINI_API_KEY"))
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is not set.")
         return genai.Client(

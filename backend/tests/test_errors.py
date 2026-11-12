@@ -17,6 +17,8 @@ def api_error(code, message):
     (api_error(400, "The prompt was blocked by safety filters."), "content rules"),
     (api_error(400, "Invalid argument: duration"), "did not accept"),
     (api_error(403, "API key not valid."), "rejected the app's key"),
+    # Google answers a bad key with 400, which must not read as "reword your request".
+    (api_error(400, "API key not valid. Please pass a valid API key."), "rejected the app's key"),
     (api_error(404, "models/x is not found"), "not available"),
     (api_error(503, "The service is currently unavailable."), "had a problem"),
 ])
