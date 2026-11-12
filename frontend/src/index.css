@@ -2448,6 +2448,7 @@ a:hover {
   align-items: center;
   gap: 6px;
   font-size: 0.8125rem;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
