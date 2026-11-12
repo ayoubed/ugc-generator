@@ -113,6 +113,8 @@ class ScriptStructure(BaseModel):
 
 class ExtractAssetsRequest(BaseModel):
     idea: str
+    project_id: Optional[str] = None  # when given, the project's photo and pictures are looked at
+    product_name: Optional[str] = Field(default=None, max_length=120)
     llm_model: Optional[str] = None  # None = the default script model
 
 
@@ -152,6 +154,8 @@ class GenerateScenesRequest(BaseModel):
     asset_bible: Optional[AssetBible] = None
     # The structure of a reference video to follow, scene by scene (sets the number of scenes).
     structure: Optional[ScriptStructure] = None
+    # The product's real name. Empty = the script must not invent one.
+    product_name: Optional[str] = Field(default=None, max_length=120)
 
     @model_validator(mode="before")
     @classmethod

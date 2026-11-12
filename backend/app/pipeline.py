@@ -135,39 +135,103 @@ def asset_bible_lines(asset_bible: Optional[Dict[str, Any]]) -> List[str]:
     return lines
 
 
-def extract_asset_bible(idea: str, llm_model: str) -> Dict[str, str]:
+# How many pictures are looked at when the consistent details are written.
+MAX_DETAIL_PICTURES = 7
+
+
+def product_name_rule(product_name: Optional[str]) -> str:
     """
-    Writes an Asset Bible from the idea: one fixed, detailed description of the speaker, the
-    products/props and the setting. Video models don't remember earlier scenes, so this
-    exact text goes into every scene's prompt to keep things like a product's colour from drifting.
+    What the script writer and the details writer are told about the product's name. Without this,
+    a brand name gets made up (e.g. "the Aura watch") and ends up spoken in the ad.
+    """
+    name = " ".join(str(product_name or "").split())
+    if name:
+        return (
+            f'PRODUCT NAME: "{name}". Whenever the product or its brand is named, use exactly this name, '
+            "spelled this way. Never invent another product or brand name."
+        )
+    return (
+        "PRODUCT NAME: not given. Do not invent a product or brand name. Refer to the product by what "
+        'it is (e.g. "this watch"), and mention branding only where a picture shows it.'
+    )
+
+
+def asset_bible_prompt(
+    idea: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None
+) -> str:
+    """
+    The instruction for writing the Asset Bible. `pictures` are the attached pictures in order:
+    [{"role": "speaker" | "reference", "description": str}].
+    """
+    pictures = pictures or []
+    lines = [
+        "You are preparing a multi-scene UGC video. Each scene is generated separately by a video model",
+        "that does not remember the other scenes, so anything that appears in more than one scene needs",
+        "one fixed description that is reused word for word.",
+        "",
+        f'Video idea: "{idea}"',
+        product_name_rule(product_name),
+    ]
+    if pictures:
+        lines += ["", "The attached pictures show what will really be in the video:"]
+        for number, picture in enumerate(pictures, start=1):
+            if picture.get("role") == "speaker":
+                text = "the person who speaks in the video."
+            else:
+                text = (picture.get("description") or "").strip() or "a product, prop or place shown in the video."
+            lines.append(f"- Picture {number}: {text}")
+        lines += [
+            "",
+            "The pictures are the truth. Describe the person, the products and the place exactly as the",
+            "pictures show them: never invent a hair colour, a head covering, clothing, a product colour or",
+            "a material that a picture contradicts. Where the idea and a picture disagree, the picture wins.",
+            "Use the idea only for what no picture shows.",
+        ]
+    lines += [
+        "",
+        "Write these descriptions:",
+        "- character: the person speaking. Apparent age, hair or head covering, build, clothing with colours,",
+        "  accessories.",
+        "- hero_props: every product or object that matters to the story. Exact count, colours, materials,",
+        '  shape, size, packaging, branding, and how items differ from each other (e.g. "3 watches: ...").',
+        "- setting: where it is filmed. Room, furniture and surfaces, notable background objects.",
+        "- voice: how the speaker sounds, so it is the same in every scene. Apparent age and gender, pitch,",
+        '  pace, energy, accent if the idea implies one, and how it is recorded (e.g. "phone microphone,',
+        '  slightly roomy"). Also the tone of delivery, as one steady mood that holds from the first',
+        '  scene to the last (e.g. "calm and warm, like telling a friend, never excited or salesy").',
+        "",
+        "Rules:",
+        "- Concrete, visual facts only. No story, no dialogue, no actions, no emotions.",
+        "- No camera, lighting or visual style: those are set separately.",
+        "- Stay faithful to the idea; where it is vague, pick specific, plausible details.",
+        "- One or two sentences per field. Leave a field empty only if it truly does not apply.",
+    ]
+    return "\n".join(lines)
+
+
+def extract_asset_bible(
+    idea: str, llm_model: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None
+) -> Dict[str, str]:
+    """
+    Writes an Asset Bible: one fixed, detailed description of the speaker, the products/props and
+    the setting. Video models don't remember earlier scenes, so this exact text goes into every
+    scene's prompt to keep things like a product's colour from drifting.
+
+    `pictures` ([{"path", "role", "description"}]) are the creator photo and the product pictures.
+    The descriptions are written from them: a description made up from the idea alone can
+    contradict the photo, and the video model then switches to the described person.
     Raises on failure so the caller can show the error.
     """
-    prompt = f"""
-    You are preparing a multi-scene UGC video. Each scene is generated separately by a video model
-    that does not remember the other scenes, so anything that appears in more than one scene needs
-    one fixed description that is reused word for word.
-
-    Video idea: "{idea}"
-
-    Write these descriptions:
-    - character: the person speaking. Apparent age, hair, build, clothing with colours, accessories.
-    - hero_props: every product or object that matters to the story. Exact count, colours, materials,
-      shape, size, packaging, branding, and how items differ from each other (e.g. "3 watches: ...").
-    - setting: where it is filmed. Room, furniture and surfaces, notable background objects.
-    - voice: how the speaker sounds, so it is the same in every scene. Apparent age and gender, pitch,
-      pace, energy, accent if the idea implies one, and how it is recorded (e.g. "phone microphone,
-      slightly roomy").
-
-    Rules:
-    - Concrete, visual facts only. No story, no dialogue, no actions, no emotions.
-    - No camera, lighting or visual style: those are set separately.
-    - Stay faithful to the idea; where it is vague, pick specific, plausible details.
-    - One or two sentences per field. Leave a field empty only if it truly does not apply.
-    """
+    pictures = [p for p in (pictures or []) if p.get("path") and os.path.exists(p["path"])][:MAX_DETAIL_PICTURES]
+    contents: List[Any] = []
+    for picture in pictures:
+        with open(picture["path"], "rb") as f:
+            contents.append(types.Part.from_bytes(data=f.read(), mime_type=detect_image_mime(picture["path"])))
+    contents.append(asset_bible_prompt(idea, pictures, product_name))
     client = get_client()  # kept in a variable: a dropped client can close its connection mid-request
     response = client.models.generate_content(
         model=llm_model,
-        contents=prompt,
+        contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=AssetBible,
@@ -299,6 +363,7 @@ def generate_script_and_scenes(
     context_image_descriptions: Optional[List[str]] = None,
     asset_bible: Optional[Dict[str, str]] = None,
     structure: Optional[Dict[str, Any]] = None,
+    product_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Writes the video context and the scenes from a user idea.
@@ -408,6 +473,7 @@ def generate_script_and_scenes(
     prompt = f"""
     You are a creative director for a UGC (User Generated Content) video.
     The user wants to make a video based on this idea: "{idea}"
+    {product_name_rule(product_name)}
     {context_pictures_section}
     {asset_bible_section}
     {structure_section}

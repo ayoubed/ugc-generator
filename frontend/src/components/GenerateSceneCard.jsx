@@ -5,6 +5,7 @@ import LoadingSpinner from './LoadingSpinner';
 import StartPicturePicker from './StartPicturePicker';
 import EndPicturePicker from './EndPicturePicker';
 import { useStorageUrl } from '../hooks/useStorageUrl';
+import { takeContextPictureCount, usedCreatorPhoto } from '../utils/takePictures';
 import {
   FROM_PREVIOUS_SOURCES,
   activeTakeNumber,
@@ -605,11 +606,12 @@ export default function GenerateSceneCard({
                             Refined{viewedTake.refinedFrom ? ` from take ${viewedTake.refinedFrom}` : ''}: “{viewedTake.editPrompt}”
                           </li>
                         )}
-                        {viewedTake.referenceImages?.length > 0 && (
+                        {takeContextPictureCount(viewedTake) > 0 && (
                           <li>
-                            Used {viewedTake.referenceImages.length} context picture{viewedTake.referenceImages.length === 1 ? '' : 's'}
+                            Used {takeContextPictureCount(viewedTake)} context picture{takeContextPictureCount(viewedTake) === 1 ? '' : 's'}
                           </li>
                         )}
+                        {usedCreatorPhoto(viewedTake) && <li>Used the creator photo to keep the person the same</li>}
                         {promptChangedSinceViewed && <li>Made with an earlier version of the prompt</li>}
                         <li>
                           {viewedTake.sceneAudio === SCENE_AUDIO_VOICE_ONLY

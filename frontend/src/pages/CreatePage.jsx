@@ -55,6 +55,8 @@ function CreateIdea({ projectId: id }) {
 
   // Main Form State
   const [idea, setIdea] = useState('');
+  // The product's real name: without it the script may not name the product at all.
+  const [productName, setProductName] = useState('');
   const [numScenes, setNumScenes] = useState(3);
   const [hookStyle, setHookStyle] = useState(HOOK_STYLES[0]);
   const [customHookDesc, setCustomHookDesc] = useState('');
@@ -178,6 +180,7 @@ function CreateIdea({ projectId: id }) {
         }
         if (project.settings) {
           const s = project.settings;
+          if (s.productName) setProductName(s.productName);
           if (s.numScenes) setNumScenes(s.numScenes);
           if (s.hookStyle) setHookStyle(s.hookStyle);
           if (s.customHookDesc) setCustomHookDesc(s.customHookDesc);
@@ -260,6 +263,7 @@ function CreateIdea({ projectId: id }) {
   };
 
   const buildSettings = (overrides = {}) => ({
+    productName: productName.trim(),
     numScenes,
     hookStyle,
     customHookDesc: hookStyle === 'Custom Hook' ? customHookDesc : '',
@@ -434,6 +438,8 @@ function CreateIdea({ projectId: id }) {
           });
           finalImageRef = storagePath;
           setStartingImageRef(finalImageRef);
+          // Saved now: the consistent details below are written from this photo.
+          await updateProject(id, { startingImageRef: finalImageRef });
         } finally {
           setUploadingImage(false);
         }
@@ -445,7 +451,7 @@ function CreateIdea({ projectId: id }) {
       if (assetBibleFilledCount(assetBible) === 0) {
         setProgress('Writing the consistent details…');
         try {
-          details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId));
+          details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId, id, productName));
           setAssetBible(details);
         } catch (err) {
           console.warn('Could not write the consistent details; continuing without them:', err);
@@ -462,6 +468,7 @@ function CreateIdea({ projectId: id }) {
       // The server writes the script and saves the scenes (the page gets them through its live listener).
       await generateScenes(id, {
         idea: idea.trim(),
+        product_name: productName.trim() || null,
         num_scenes: numScenes,
         target_words_per_scene: wordsPerScene,
         hook_style: hookStyle,
@@ -580,6 +587,23 @@ function CreateIdea({ projectId: id }) {
                   The reference: {savedReference.breakdown.summary} Describe your own product the same way.
                 </p>
               )}
+            </div>
+
+            <div className="form-group">
+              <label className="label" htmlFor="idea-product-name">Product or brand name</label>
+              <input
+                id="idea-product-name"
+                type="text"
+                className="input"
+                maxLength={120}
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                placeholder="e.g. Luma One"
+                autoComplete="off"
+              />
+              <p className="field-hint">
+                Said exactly as you write it. Left empty, the script never names the product, so no name is made up.
+              </p>
             </div>
 
             <div className="idea-pictures">
@@ -706,6 +730,8 @@ function CreateIdea({ projectId: id }) {
               value={assetBible}
               onChange={setAssetBible}
               idea={idea}
+              projectId={id}
+              productName={productName}
               scriptModel={scriptModelId}
               disabled={generating}
             />

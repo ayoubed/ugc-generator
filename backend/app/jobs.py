@@ -359,6 +359,29 @@ def collect_reference_specs(
     return specs
 
 
+# What the video model is told about the creator photo when it is sent as a reference.
+CREATOR_REFERENCE_TEXT = (
+    "The person who speaks in this video. Whenever a person is visible, it is this exact person: "
+    "the same face, hair or head covering, skin tone and clothes."
+)
+
+
+def creator_reference_spec(
+    project_data: Dict[str, Any], image_source: str, used: int, limit: int, uid: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    The creator photo as a reference picture, for a scene that starts from the scene before it.
+    Such a scene only gets the last frame of that scene, which often shows no face (hands, a
+    product close-up); without the photo the model invents a person. A scene that starts from the
+    creator photo already has it, and there must be room within the model's picture limit.
+    """
+    creator = project_data.get("startingImageRef") or ""
+    if image_source not in FROM_PREVIOUS_SOURCES or not creator or used >= limit:
+        return None
+    _assert_owned_path(uid, creator, "creator photo")
+    return {"scope": "creator", "storageRef": creator, "url": None, "description": CREATOR_REFERENCE_TEXT}
+
+
 def download_reference_images(
     specs: List[Dict[str, Any]], temp_dir: str, max_images: int = MAX_REFERENCE_IMAGES
 ) -> List[Dict[str, Any]]:
@@ -376,6 +399,8 @@ def download_reference_images(
         try:
             download_file(spec["storageRef"], local_path)
         except Exception as e:
+            if spec["scope"] == "creator":
+                raise ValueError("Could not load the creator photo. Upload it again on the Idea step.") from e
             where = "video-wide" if spec["scope"] == "global" else "scene"
             label = spec["description"] or f"picture #{i + 1}"
             raise ValueError(f"Could not load the {where} reference picture '{label}'. Remove it or upload it again.") from e
@@ -496,11 +521,15 @@ def _run_video_generation_job_sync(
 
         # Reference pictures: video-wide + scene-specific (a refinement already has them from its first turn)
         reference_specs = collect_reference_specs(project_data, scene_data, uid)
+        picture_limit = int(get_video_model(video_model).get("max_reference_images") or 0)
+        # The count is checked on the user's own pictures first, so the error names the right number.
+        if len(reference_specs) <= picture_limit:
+            creator_spec = creator_reference_spec(project_data, image_source, len(reference_specs), picture_limit, uid)
+            if creator_spec:
+                reference_specs = [creator_spec] + reference_specs
         reference_images: List[Dict[str, Any]] = []
         if reference_specs and not previous_interaction_id:
-            reference_images = download_reference_images(
-                reference_specs, temp_dir, int(get_video_model(video_model).get("max_reference_images") or 0)
-            )
+            reference_images = download_reference_images(reference_specs, temp_dir, picture_limit)
 
         # 2-4. Determine starting image
         if refining:

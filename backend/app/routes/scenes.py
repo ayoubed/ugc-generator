@@ -1,5 +1,8 @@
 import logging
-from typing import Dict, Any
+import os
+import shutil
+import tempfile
+from typing import Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 import firebase_admin
 from firebase_admin import firestore
@@ -16,7 +19,7 @@ from app.models import (
 from app.pipeline import generate_script_and_scenes, extract_asset_bible
 from app.model_registry import get_script_model
 from app.jobs import is_stale_job
-from app.storage import delete_prefix
+from app.storage import delete_prefix, download_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,15 +41,69 @@ def extract_assets_endpoint(
     if not idea:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Write your video idea first.")
 
+    temp_dir = tempfile.mkdtemp(prefix="ugc_details_")
     try:
-        data = extract_asset_bible(idea=idea, llm_model=get_script_model(request.llm_model)["id"])
+        pictures = _project_pictures(current_user["uid"], request.project_id, temp_dir)
+        data = extract_asset_bible(
+            idea=idea,
+            llm_model=get_script_model(request.llm_model)["id"],
+            pictures=pictures,
+            product_name=request.product_name,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Asset Bible extraction failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=user_message(e, "Writing the details"),
         )
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
     return ExtractAssetsResponse(asset_bible=AssetBible(**data))
+
+
+def project_picture_specs(uid: str, project_data: Dict[str, Any]) -> List[Dict[str, str]]:
+    """
+    The pictures the consistent details are written from: the creator photo first, then the
+    video-wide pictures. Only files in the user's own storage area are used.
+    """
+    specs: List[Dict[str, str]] = []
+    creator = project_data.get("startingImageRef") or ""
+    if creator:
+        specs.append({"storageRef": creator, "role": "speaker", "description": ""})
+    for item in project_data.get("globalImages") or []:
+        if isinstance(item, dict) and item.get("storageRef"):
+            specs.append({
+                "storageRef": item["storageRef"],
+                "role": "reference",
+                "description": str(item.get("description") or "").strip(),
+            })
+    return [s for s in specs if s["storageRef"].startswith(f"users/{uid}/") and ".." not in s["storageRef"]]
+
+
+def _project_pictures(uid: str, project_id: Any, temp_dir: str) -> List[Dict[str, str]]:
+    """Downloads the project's pictures. A picture that cannot be loaded is left out, not fatal."""
+    if not project_id:
+        return []
+    snap = firestore.client().collection("projects").document(str(project_id)).get()
+    if not snap.exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_id}' not found.")
+    project_data = snap.to_dict() or {}
+    if project_data.get("userId") != uid:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to read this project.")
+
+    pictures = []
+    for number, spec in enumerate(project_picture_specs(uid, project_data)):
+        ext = os.path.splitext(spec["storageRef"])[1].lower() or ".jpg"
+        local_path = os.path.join(temp_dir, f"picture_{number}{ext}")
+        try:
+            download_file(spec["storageRef"], local_path)
+        except Exception as e:
+            logger.warning("Could not load a picture for the consistent details (%s): %s", spec["storageRef"], e)
+            continue
+        pictures.append({"path": local_path, "role": spec["role"], "description": spec["description"]})
+    return pictures
 
 
 @router.post("/generate-scenes", response_model=GenerateScenesResponse)
@@ -138,6 +195,7 @@ def generate_scenes_endpoint(
             context_image_descriptions=context_image_descriptions,
             asset_bible=asset_bible_dict,
             structure=request.structure.model_dump() if request.structure else None,
+            product_name=request.product_name,
         )
     except Exception as e:
         logger.exception(f"Failed to generate scenes with Gemini: {e}")

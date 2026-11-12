@@ -48,7 +48,7 @@ export async function fetchModels() {
  * Draft the Asset Bible (speaker, products and props, setting, look) from a video idea.
  * Calls POST /api/extract-assets. Nothing is saved; returns { character, hero_props, setting, visual_style }.
  */
-export async function extractAssets(idea, llmModel) {
+export async function extractAssets(idea, llmModel, projectId = null, productName = '') {
   const authHeaders = await getAuthHeaders();
   const response = await fetch('/api/extract-assets', {
     method: 'POST',
@@ -56,7 +56,13 @@ export async function extractAssets(idea, llmModel) {
       'Content-Type': 'application/json',
       ...authHeaders,
     },
-    body: JSON.stringify({ idea, llm_model: llmModel || null }),
+    // With a project, the server writes the details from its photo and pictures, not the idea alone.
+    body: JSON.stringify({
+      idea,
+      llm_model: llmModel || null,
+      project_id: projectId || null,
+      product_name: productName?.trim() || null,
+    }),
   });
 
   if (!response.ok) {

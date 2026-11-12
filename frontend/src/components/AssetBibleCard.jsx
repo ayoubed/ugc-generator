@@ -10,7 +10,7 @@ import { assetBibleFilledCount, normalizeAssetBible } from '../utils/assetBible'
  * every scene. "Fill in from my idea" drafts them with the script model; the user edits from there.
  * `embedded` drops the card frame and title, for use inside a section that already has them.
  */
-export default function AssetBibleCard({ value, onChange, idea, scriptModel, disabled = false, embedded = false }) {
+export default function AssetBibleCard({ value, onChange, idea, projectId = null, productName = '', scriptModel, disabled = false, embedded = false }) {
   const baseId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -20,11 +20,11 @@ export default function AssetBibleCard({ value, onChange, idea, scriptModel, dis
 
   const handleFill = async () => {
     // Filling in replaces what's there, so check before overwriting the user's own text.
-    if (filled > 0 && !window.confirm('Replace the details below with new ones written from your idea?')) return;
+    if (filled > 0 && !window.confirm('Replace the details below with new ones written from your idea and pictures?')) return;
     setBusy(true);
     setError('');
     try {
-      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel)));
+      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel, projectId, productName)));
     } catch (err) {
       console.error('Could not fill in the details:', err);
       setError(friendlyError(err));
@@ -46,7 +46,7 @@ export default function AssetBibleCard({ value, onChange, idea, scriptModel, dis
           <p className="asset-sub">
             Each scene is generated on its own, so anything shown in more than one scene needs one exact
             description. These are added to every scene, word for word.
-            {embedded ? ' Left empty, they are written from your idea when the script is written.' : ''}
+            {embedded ? ' Left empty, they are written from your idea and pictures when the script is written.' : ''}
           </p>
         </div>
         <button

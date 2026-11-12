@@ -80,7 +80,7 @@ describe('Idea step: writing the script', () => {
     await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
     expect(await screen.findByText('script page')).toBeTruthy();
 
-    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model');
+    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', '');
     const [, saved, savedSettings] = saveProjectWithSettings.mock.calls.at(-1);
     expect(saved.idea).toBe('A mug that keeps coffee hot all day.');
     expect(savedSettings.assetBible).toEqual(DETAILS);
@@ -301,5 +301,33 @@ describe('Idea step: the reference video comes first', () => {
     await waitFor(() => expect(filled.getAllByRole('listitem').map((li) => li.textContent))
       .toEqual(['2 scenes', '6 seconds each', '15 words per scene', '1 style detail']));
     expect(screen.getByText(/The reference: A creator shows a mug\. Describe your own product the same way\./)).toBeTruthy();
+  });
+});
+
+describe('Idea step: the product name', () => {
+  it('sends the name you typed to the details and the script, and saves it', async () => {
+    const bar = open();
+    await formLoaded();
+    await userEvent.type(screen.getByLabelText('Product or brand name'), ' Luma One ');
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', ' Luma One ');
+    expect(generateScenes.mock.calls[0][1].product_name).toBe('Luma One');
+    expect(saveProjectWithSettings.mock.calls.at(-1)[2].productName).toBe('Luma One');
+  });
+
+  it('sends no name when the field is empty, and says what that means', async () => {
+    const bar = open();
+    await formLoaded();
+    expect(screen.getByText(/Left empty, the script never names the product/)).toBeTruthy();
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(generateScenes.mock.calls[0][1].product_name).toBeNull();
+  });
+
+  it('shows the saved name again', async () => {
+    open({ project: { settings: { productName: 'Luma One' } } });
+    await formLoaded();
+    await waitFor(() => expect(screen.getByLabelText('Product or brand name').value).toBe('Luma One'));
   });
 });
