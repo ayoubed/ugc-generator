@@ -12,6 +12,15 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
+# Set on an allowlisted account's sign-in token by GET /api/me. The Firestore and Storage rules
+# require it, so an account that is not on the list cannot create projects or upload files either.
+ACCESS_CLAIM = "allowed"
+
+
+def grant_access_claim(uid: str) -> None:
+    auth.set_custom_user_claims(uid, {ACCESS_CLAIM: True})
+
+
 def allowed_emails() -> set:
     """
     Accounts that may use the API, from ALLOWED_EMAILS (comma-separated). Every call costs money
@@ -35,6 +44,7 @@ async def get_current_user(
             "uid": os.environ.get("MOCK_AUTH_UID", "test_user_123"),
             "email": os.environ.get("MOCK_AUTH_EMAIL", "test@example.com"),
             "name": os.environ.get("MOCK_AUTH_NAME", "Test User"),
+            "has_access_claim": True,
         }
 
     if not credentials or not credentials.credentials:
@@ -60,7 +70,13 @@ async def get_current_user(
         email = decoded_token.get("email", "")
         allowed = allowed_emails()
         if allowed and email.lower() not in allowed:
-            logger.warning("Access denied for user email '%s' (uid=%s). Allowed list: %s", email, uid, allowed)
+            logger.warning("Access denied for user email '%s' (uid=%s).", email, uid)
+            if decoded_token.get(ACCESS_CLAIM) is True:
+                # Removed from the list since they last signed in: close the database and files too.
+                try:
+                    auth.set_custom_user_claims(uid, {ACCESS_CLAIM: False})
+                except Exception as e:
+                    logger.error("Could not remove access from uid=%s: %s", uid, e)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This account doesn't have access to UGC Studio yet.",
@@ -70,6 +86,7 @@ async def get_current_user(
             "uid": uid,
             "email": email,
             "name": decoded_token.get("name", ""),
+            "has_access_claim": decoded_token.get(ACCESS_CLAIM) is True,
         }
     except HTTPException:
         raise

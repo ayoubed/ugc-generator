@@ -13,10 +13,50 @@ import FinishPage from './pages/FinishPage';
 import ExportPage from './pages/ExportPage';
 
 /**
+ * Shown to a signed-in account that may not use the app: it is not on the allowlist, or the check
+ * could not be made.
+ */
+function NoAccess() {
+  const { user, access, signOut, retryAccessCheck } = useAuth();
+  const denied = access === 'denied';
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px',
+        backgroundColor: 'var(--bg-card)',
+      }}
+    >
+      <div className="card card-white empty-state" style={{ maxWidth: '440px' }} role="alert">
+        <h1 className="empty-state-title">
+          {denied ? 'This account doesn\u2019t have access' : 'Couldn\u2019t check your access'}
+        </h1>
+        <p className="empty-state-text">
+          {denied
+            ? `${user?.email || 'This Google account'} is not on the list of accounts that can use the app. Sign in with a different account, or ask for access.`
+            : 'The server could not be reached. Check your connection and try again.'}
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          {!denied && (
+            <button type="button" className="btn btn-primary" onClick={retryAccessCheck}>Try again</button>
+          )}
+          <button type="button" className={`btn ${denied ? 'btn-primary' : 'btn-secondary'}`} onClick={() => signOut()}>
+            {denied ? 'Use a different account' : 'Sign out'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Route guard requiring authenticated user
  */
 function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth();
+  const { user, loading, access } = useAuth();
 
   if (loading) {
     return (
@@ -36,6 +76,10 @@ function ProtectedRoute({ children }) {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (access !== 'allowed') {
+    return <NoAccess />;
   }
 
   return children;
