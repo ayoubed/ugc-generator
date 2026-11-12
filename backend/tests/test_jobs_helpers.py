@@ -99,3 +99,66 @@ def test_files_outside_the_callers_area_are_refused():
         assert "outside your storage area" in str(error)
     else:
         raise AssertionError("a path in another user's area must be refused")
+
+
+def test_a_take_counts_as_flagged_only_when_the_check_found_problems():
+    issues = [{"kind": "speech", "detail": "Cut off at the end."}]
+    assert jobs.take_was_flagged({"takeChecks": {"2": {"ok": False, "issues": issues}}}, 2) is True
+    assert jobs.take_was_flagged({"takeChecks": {"2": {"ok": True, "issues": []}}}, 2) is False
+    assert jobs.take_was_flagged({"takeChecks": {"1": {"ok": False, "issues": issues}}}, 2) is False   # another take
+    assert jobs.take_was_flagged({}, 1) is False                                                       # not checked
+
+
+class FakeTakes:
+    """Stands in for the video job: each call finishes a take whose check passes or fails as scripted."""
+
+    def __init__(self, db, check_results, fail_attempts=()):
+        self.db, self.check_results, self.fail_attempts, self.made = db, list(check_results), set(fail_attempts), []
+
+    def __call__(self, uid, project_id, scene_index, source, _file, _settings, attempt):
+        self.made.append((scene_index, attempt))
+        scene = self.db.store[f"projects/{project_id}/scenes/{scene_index}"]
+        if attempt in self.fail_attempts:
+            scene.update({"videoStatus": "completed" if scene.get("storageRef") else "failed", "errorMessage": "model busy"})
+            return
+        ok = self.check_results.pop(0)
+        scene.update({"videoStatus": "completed", "storageRef": f"take{attempt}.mp4", "activeAttempt": attempt})
+        scene.setdefault("takeChecks", {})[str(attempt)] = {"ok": ok, "issues": [] if ok else [{"kind": "speech", "detail": "x"}]}
+
+
+def run_all(fake_db, monkeypatch, takes, retake):
+    fake_db.store["projects/p1"] = {"userId": "u1", "startingImageRef": "creator.png", "settings": {}, "generateAll": {}}
+    fake_db.store["projects/p1/scenes/0"] = {"prompt": "Say hi", "attempt": 0}
+    fake_db.store["projects/p1/scenes/1"] = {"prompt": "Say bye", "attempt": 0, "imageSource": "last_frame"}
+    monkeypatch.setattr(jobs, "_run_video_generation_job_sync", takes)
+    jobs._run_generate_all_sync("u1", "p1", stitch=False, retake=retake)
+    return fake_db.store["projects/p1"]["generateAll"]
+
+
+def test_generate_all_retakes_a_flagged_scene_once_and_moves_on(fake_db, monkeypatch):
+    takes = FakeTakes(fake_db, [False, False, True])   # scene 0: flagged twice; scene 1: fine
+    state = run_all(fake_db, monkeypatch, takes, retake=True)
+    assert takes.made == [(0, 1), (0, 2), (1, 1)]
+    assert state["status"] == "done" and state["retaking"] is False
+    assert fake_db.store["projects/p1/scenes/0"]["activeAttempt"] == 2
+
+
+def test_generate_all_without_the_option_never_retakes(fake_db, monkeypatch):
+    takes = FakeTakes(fake_db, [False, True])
+    assert run_all(fake_db, monkeypatch, takes, retake=False)["status"] == "done"
+    assert takes.made == [(0, 1), (1, 1)]
+
+
+def test_a_failed_retake_keeps_the_first_take_and_the_run_goes_on(fake_db, monkeypatch):
+    takes = FakeTakes(fake_db, [False, True], fail_attempts={2})
+    state = run_all(fake_db, monkeypatch, takes, retake=True)
+    assert takes.made == [(0, 1), (0, 2), (1, 1)]
+    assert state["status"] == "done"
+    assert fake_db.store["projects/p1/scenes/0"]["storageRef"] == "take1.mp4"
+
+
+def test_generate_all_stops_at_a_scene_that_fails_outright(fake_db, monkeypatch):
+    takes = FakeTakes(fake_db, [], fail_attempts={1})
+    state = run_all(fake_db, monkeypatch, takes, retake=True)
+    assert takes.made == [(0, 1)]
+    assert state["status"] == "failed" and "Scene 1 failed" in state["error"]

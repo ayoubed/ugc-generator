@@ -38,6 +38,8 @@ def _owned_project(pid: str, uid: str):
 
 class GenerateAllRequest(BaseModel):
     stitch: bool = False
+    # Make one more take of a scene when the automatic check flags its first take.
+    retake: bool = False
 
 
 @router.post("/projects/{pid}/generate-all", status_code=status.HTTP_202_ACCEPTED)
@@ -48,11 +50,13 @@ def generate_all_endpoint(
 ):
     """
     Makes a take for every scene that has no video yet, one after another, in the background.
-    With stitch=true the final video is stitched when the last scene is done. Progress is in
+    With stitch=true the final video is stitched when the last scene is done. With retake=true a
+    scene whose first take is flagged by the automatic check gets one more take. Progress is in
     project.generateAll; the run stops at the first scene that fails.
     """
     uid = current_user["uid"]
     stitch = bool(request and request.stitch)
+    retake = bool(request and request.retake)
     _, project_ref, project_data = _owned_project(pid, uid)
 
     scenes = scene_order(project_ref)
@@ -75,6 +79,8 @@ def generate_all_endpoint(
         "generateAll": {
             "status": "running",
             "stitch": stitch,
+            "retake": retake,
+            "retaking": False,
             "total": len(todo),
             "current": None,
             "currentNumber": None,
@@ -85,7 +91,7 @@ def generate_all_endpoint(
         },
     })
     try:
-        spawn_background(run_generate_all(uid=uid, project_id=pid, stitch=stitch))
+        spawn_background(run_generate_all(uid=uid, project_id=pid, stitch=stitch, retake=retake))
     except Exception:
         # Never leave the project marked as running when nothing is running.
         project_ref.update({"generateAll.status": "failed", "generateAll.error": "Could not start. Try again."})

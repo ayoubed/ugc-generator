@@ -113,6 +113,7 @@ function GenerateVideos({ projectId: id }) {
   const [runRequesting, setRunRequesting] = useState(false);
   const [runError, setRunError] = useState('');
   const [stitchWhenDone, setStitchWhenDone] = useState(true);
+  const [retakeFlagged, setRetakeFlagged] = useState(false); // off by default: it can cost an extra take per scene
 
   useDoneNotifications(project, scenes);
 
@@ -322,7 +323,7 @@ function GenerateVideos({ projectId: id }) {
         setRunError("Couldn't save your latest prompt edits, so nothing was started. Check your connection and try again.");
         return;
       }
-      await generateAllScenes(id, { stitch: stitchWhenDone });
+      await generateAllScenes(id, { stitch: stitchWhenDone, retake: retakeFlagged });
     } catch (err) {
       console.error('Could not start generating all scenes:', err);
       setRunError(friendlyError(err));
@@ -607,7 +608,7 @@ function GenerateVideos({ projectId: id }) {
                         {run.status === 'stitching' || stitching
                           ? 'All scenes are ready. Stitching the final video.'
                           : run.currentNumber
-                            ? `Generating all scenes: scene ${run.currentNumber} now, ${missingNumbers.length + busyNumbers.length} left${run.stitch ? ', then stitching' : ''}.`
+                            ? `Generating all scenes: ${run.retaking ? 'retaking ' : ''}scene ${run.currentNumber} now, ${missingNumbers.length + busyNumbers.length} left${run.stitch ? ', then stitching' : ''}.`
                             : 'Starting the next scene.'}
                       </p>
                       {run.status !== 'stitching' && !stitching && (
@@ -633,6 +634,15 @@ function GenerateVideos({ projectId: id }) {
                             onChange={(e) => setStitchWhenDone(e.target.checked)}
                           />
                           Stitch the final video when they are done
+                        </label>
+                        <label className="gen-run-option" htmlFor="gen-retake-flagged">
+                          <input
+                            type="checkbox"
+                            id="gen-retake-flagged"
+                            checked={retakeFlagged}
+                            onChange={(e) => setRetakeFlagged(e.target.checked)}
+                          />
+                          Make one more take when the automatic check finds a problem (costs an extra take)
                         </label>
                       </div>
                       <button type="button" id="gen-generate-all" className="btn btn-primary" onClick={handleGenerateAll} disabled={runRequesting}>

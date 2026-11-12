@@ -1044,6 +1044,12 @@ def is_generate_all_alive(project_data: Dict[str, Any], scenes: List[tuple]) -> 
     return bool(heard) and (datetime.datetime.now(datetime.timezone.utc).timestamp() - heard) < GENERATE_ALL_QUIET_SECONDS
 
 
+def take_was_flagged(scene_data: Dict[str, Any], attempt: int) -> bool:
+    """Whether the automatic check found a problem with this take (False when it has not been checked)."""
+    check = (scene_data.get("takeChecks") or {}).get(str(attempt))
+    return isinstance(check, dict) and check.get("ok") is False and bool(check.get("issues"))
+
+
 def starting_source_for(scene_data: Dict[str, Any], is_first: bool) -> str:
     """The starting picture a scene uses (same rule as effectiveImageSource in the frontend)."""
     source = scene_data.get("imageSource")
@@ -1055,11 +1061,11 @@ def starting_source_for(scene_data: Dict[str, Any], is_first: bool) -> str:
     return source
 
 
-async def run_generate_all(uid: str, project_id: str, stitch: bool = False) -> None:
-    await asyncio.to_thread(_run_generate_all_sync, uid, project_id, stitch)
+async def run_generate_all(uid: str, project_id: str, stitch: bool = False, retake: bool = False) -> None:
+    await asyncio.to_thread(_run_generate_all_sync, uid, project_id, stitch, retake)
 
 
-def _run_generate_all_sync(uid: str, project_id: str, stitch: bool) -> None:
+def _run_generate_all_sync(uid: str, project_id: str, stitch: bool, retake: bool = False) -> None:
     db = firestore.client()
     project_ref = db.collection("projects").document(project_id)
 
@@ -1116,52 +1122,57 @@ def _run_generate_all_sync(uid: str, project_id: str, stitch: bool) -> None:
                     "Remove some on the Script step."
                 )
 
-            attempt = int(scene_data.get("attempt") or 0) + 1
-            job_id = f"{project_id}_{scene_id}_{attempt}"
-            db.collection("jobs").document(job_id).set({
-                "jobId": job_id,
-                "projectId": project_id,
-                "sceneIndex": int(scene_id),
-                "attempt": attempt,
-                "userId": uid,
-                "imageSource": source,
-                "status": "queued",
-                "createdAt": firestore.SERVER_TIMESTAMP,
-            })
-            scene_ref.update({
-                "attempt": attempt,
-                "videoStatus": "queued",
-                "jobId": job_id,
-                "errorMessage": None,
-                "failedAttempt": None,
-                "imageSource": source,
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-                "heartbeatAt": firestore.SERVER_TIMESTAMP,
-            })
-            set_state(current=scene_id, currentNumber=number)
+            # One take, and with `retake` one more when the automatic check flags the first.
+            for round_number in range(2 if retake else 1):
+                attempt = int((scene_ref.get().to_dict() or {}).get("attempt") or 0) + 1
+                job_id = f"{project_id}_{scene_id}_{attempt}"
+                db.collection("jobs").document(job_id).set({
+                    "jobId": job_id,
+                    "projectId": project_id,
+                    "sceneIndex": int(scene_id),
+                    "attempt": attempt,
+                    "userId": uid,
+                    "imageSource": source,
+                    "status": "queued",
+                    "createdAt": firestore.SERVER_TIMESTAMP,
+                })
+                scene_ref.update({
+                    "attempt": attempt,
+                    "videoStatus": "queued",
+                    "jobId": job_id,
+                    "errorMessage": None,
+                    "failedAttempt": None,
+                    "imageSource": source,
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                    "heartbeatAt": firestore.SERVER_TIMESTAMP,
+                })
+                set_state(current=scene_id, currentNumber=number, retaking=round_number > 0)
 
-            _run_video_generation_job_sync(
-                uid, project_id, int(scene_id), source, None,
-                {
-                    "duration_seconds": settings.get("duration", 8),
-                    "aspect_ratio": settings.get("aspectRatio", "9:16"),
-                    "resolution": settings.get("resolution", "1080p"),
-                    "video_model": model["id"],
-                    "edit_prompt": None,
-                },
-                attempt,
-            )
+                _run_video_generation_job_sync(
+                    uid, project_id, int(scene_id), source, None,
+                    {
+                        "duration_seconds": settings.get("duration", 8),
+                        "aspect_ratio": settings.get("aspectRatio", "9:16"),
+                        "resolution": settings.get("resolution", "1080p"),
+                        "video_model": model["id"],
+                        "edit_prompt": None,
+                    },
+                    attempt,
+                )
 
-            after = scene_ref.get().to_dict() or {}
-            if not after.get("storageRef"):
-                if cancelled():
-                    set_state(status="cancelled", current=None, currentNumber=None)
-                    return
-                if after.get("videoStatus") != "failed":
-                    # The take itself was cancelled on the scene: stop the run, the user took over.
-                    set_state(status="cancelled", current=None, currentNumber=None)
-                    return
-                raise ValueError(f"Scene {number} failed: {after.get('errorMessage') or 'no video came back'}")
+                after = scene_ref.get().to_dict() or {}
+                if not after.get("storageRef"):
+                    if cancelled():
+                        set_state(status="cancelled", current=None, currentNumber=None, retaking=False)
+                        return
+                    if after.get("videoStatus") != "failed":
+                        # The take itself was cancelled on the scene: stop the run, the user took over.
+                        set_state(status="cancelled", current=None, currentNumber=None, retaking=False)
+                        return
+                    raise ValueError(f"Scene {number} failed: {after.get('errorMessage') or 'no video came back'}")
+                # A retake that fails leaves the first take in use (and unchecked), so the run goes on.
+                if not take_was_flagged(after, attempt) or cancelled():
+                    break
 
         if stitch and not cancelled():
             included = [item for item in scene_order(project_ref) if not is_scene_skipped(item[2])]
@@ -1176,9 +1187,9 @@ def _run_generate_all_sync(uid: str, project_id: str, stitch: bool) -> None:
                 })
                 _run_stitch_job_sync(uid, project_id, len(included), {})
 
-        set_state(status="done", current=None, currentNumber=None, error=None)
+        set_state(status="done", current=None, currentNumber=None, error=None, retaking=False)
         logger.info("Generate-all finished for project %s.", project_id)
 
     except Exception as e:
         logger.exception("Generate-all stopped for project %s: %s", project_id, e)
-        set_state(status="failed", error=user_message(e, "Generating the scenes"), current=None, currentNumber=None)
+        set_state(status="failed", error=user_message(e, "Generating the scenes"), current=None, currentNumber=None, retaking=False)

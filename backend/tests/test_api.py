@@ -267,3 +267,13 @@ def test_delete_removes_the_project_its_scenes_and_files_and_stops_takes(api, mo
 
 def test_dev_sign_in_route_does_not_exist_outside_local_test_mode(api):
     assert api.get("/api/dev/token").status_code == 404
+
+
+def test_generate_all_passes_the_retake_option_on(api):
+    project(api)
+    scene(api, "0")
+    api.post("/api/projects/p1/generate-all", json={"retake": True})
+    assert api.db.store["projects/p1"]["generateAll"]["retake"] is True
+    api.db.store["projects/p1"]["generateAll"] = {}
+    api.post("/api/projects/p1/generate-all")
+    assert api.db.store["projects/p1"]["generateAll"]["retake"] is False
