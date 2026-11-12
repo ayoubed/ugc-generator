@@ -90,20 +90,11 @@ export default function DashboardPage() {
     <Layout>
       <div className="container" style={{ paddingTop: '40px' }}>
         {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            marginBottom: '32px',
-          }}
-        >
-          <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: '6px' }}>
-              Your Projects
-            </h1>
-            <p style={{ color: 'var(--text-secondary)' }}>
-              Manage and generate AI-driven user generated content videos
+        <div className="page-head">
+          <div className="page-head-text">
+            <h1 className="page-title">Your videos</h1>
+            <p className="page-subtitle" style={{ color: 'var(--text-secondary)' }}>
+              Each project is one video, from idea to download.
             </p>
           </div>
 
@@ -121,7 +112,7 @@ export default function DashboardPage() {
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                <span>New Project</span>
+                <span>New video</span>
               </>
             )}
           </button>
@@ -185,7 +176,7 @@ export default function DashboardPage() {
               🎬
             </div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '8px' }}>
-              No projects yet
+              No videos yet
             </h3>
             <p
               style={{
@@ -195,7 +186,7 @@ export default function DashboardPage() {
                 fontSize: '0.9375rem',
               }}
             >
-              Start by creating a new UGC video project. Define your hook, generate AI script scenes, and produce high-converting authentic videos.
+              Describe the video, add a photo of the person and the product, and the app writes the script, films the scenes and stitches them together.
             </p>
             <button
               type="button"
@@ -207,7 +198,7 @@ export default function DashboardPage() {
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              <span>Create Your First Project</span>
+              <span>Make your first video</span>
             </button>
           </div>
         ) : (
@@ -215,7 +206,7 @@ export default function DashboardPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))',
               gap: '20px',
             }}
           >

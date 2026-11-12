@@ -75,7 +75,7 @@ function ProtectedRoute({ children }) {
           backgroundColor: 'var(--bg-primary)',
         }}
       >
-        <LoadingSpinner size="lg" label="Loading UGC Studio..." />
+        <LoadingSpinner size="lg" label="Loading…" />
       </div>
     );
   }

@@ -12,11 +12,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useProject, useScenes, updateProject, saveProjectWithSettings } from '../hooks/useProject';
 import SaveIndicator from '../components/SaveIndicator';
 import { useModels, resolveVideoModel, modelPictureLimit } from '../hooks/useModels';
-import { generateScenes, resolveStorageUrl } from '../services/api';
+import { extractAssets, generateScenes, resolveStorageUrl } from '../services/api';
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { isSceneBusy, maxReachableStep, sceneHasVideo, stepPath } from '../utils/projectProgress';
-import { normalizeAssetBible, sameAssetBible } from '../utils/assetBible';
+import { assetBibleFilledCount, normalizeAssetBible, sameAssetBible } from '../utils/assetBible';
 import {
   MAX_STRUCTURE_SCENES,
   breakdownParts,
@@ -153,6 +153,7 @@ function CreateIdea({ projectId: id }) {
 
   // Execution state
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState('');
   const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -249,13 +250,13 @@ function CreateIdea({ projectId: id }) {
       });
     } catch (err) {
       console.error('Failed to upload starting image:', err);
-      alert('Failed to upload image. Please check your storage rules.');
+      setError('The photo could not be uploaded. Check your connection and try again.');
     } finally {
       setUploadingImage(false);
     }
   };
 
-  const buildSettings = () => ({
+  const buildSettings = (overrides = {}) => ({
     numScenes,
     hookStyle,
     customHookDesc: hookStyle === 'Custom Hook' ? customHookDesc : '',
@@ -274,10 +275,11 @@ function CreateIdea({ projectId: id }) {
     visualTags,
     audioTags,
     assetBible,
+    ...overrides,
   });
 
-  const saveCurrentSettings = async (finalImageRef = startingImageRef) => {
-    const settingsData = buildSettings();
+  const saveCurrentSettings = async (finalImageRef = startingImageRef, overrides = {}) => {
+    const settingsData = buildSettings(overrides);
     const cleanIdea = idea.trim();
 
     // Each setting is written on its own: the Scenes page owns settings.videoContext and the server
@@ -403,12 +405,12 @@ function CreateIdea({ projectId: id }) {
     setConfirmingRegenerate(false);
 
     if (!idea.trim()) {
-      setError('Please provide a video idea.');
+      setError('Write your video idea first.');
       return;
     }
 
     if (!startingImageRef && !selectedFile) {
-      setError('Please upload a starting image of the person.');
+      setError('Add a photo of the person who speaks.');
       return;
     }
 
@@ -434,8 +436,22 @@ function CreateIdea({ projectId: id }) {
         }
       }
 
+      // Consistent details left empty are written from the idea first, so every scene describes
+      // the person and product the same way. They can be edited on the Script step.
+      let details = assetBible;
+      if (assetBibleFilledCount(assetBible) === 0) {
+        setProgress('Writing the consistent details…');
+        try {
+          details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId));
+          setAssetBible(details);
+        } catch (err) {
+          console.warn('Could not write the consistent details; continuing without them:', err);
+        }
+      }
+
       // Persist latest project settings to Firestore
-      await saveCurrentSettings(finalImageRef);
+      await saveCurrentSettings(finalImageRef, { assetBible: details });
+      setProgress('Writing the script…');
 
       // Call Backend API to generate scenes
       // Field names must match GenerateScenesRequest in backend/app/models.py: unknown fields
@@ -448,7 +464,7 @@ function CreateIdea({ projectId: id }) {
         hook_style: hookStyle,
         custom_hook_desc: hookStyle === 'Custom Hook' ? customHookDesc : '',
         llm_model: scriptModelId,
-        asset_bible: assetBible,
+        asset_bible: details,
         guidelines: {
           camera_specifics: cameraTags,
           lighting_restraints: lightingTags,
@@ -468,6 +484,7 @@ function CreateIdea({ projectId: id }) {
       setError(err.message || 'Failed to generate scenes. Please try again.');
     } finally {
       setGenerating(false);
+      setProgress('');
     }
   };
 
@@ -495,93 +512,54 @@ function CreateIdea({ projectId: id }) {
     );
   }
 
+  const totalSeconds = numScenes * duration;
+  const hookSummary = hookStyle.startsWith('Auto') ? 'Hook chosen for you' : hookStyle === 'Custom Hook' ? 'Your own hook' : hookStyle.replace(/\s*\(.*\)$/, '');
+  const guidelineCount = Object.values(guidelineState).reduce((sum, [tags]) => sum + tags.length, 0);
+  const detailsFilled = assetBibleFilledCount(assetBible);
+  const hasScript = Boolean(project && project.status && project.status !== 'draft');
+  const busy = generating || uploadingImage;
+
   return (
     <Layout>
-      <div className="container" style={{ paddingTop: '20px' }}>
-        {/* Step Indicator */}
+      <div className="container idea-page">
         <Stepper
           currentStep={1}
           maxReachableStep={maxReachableStep(project, scenes)}
-          onStepClick={generating || uploadingImage || leaving ? undefined : handleStepClick}
+          onStepClick={busy || leaving ? undefined : handleStepClick}
         />
 
-        <header className="page-head" style={{ marginBottom: '28px' }}>
+        <header className="page-head">
           <div className="page-head-text">
-            <h1 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '6px' }}>
-              Step 1: Define Video Idea & Guidelines
-            </h1>
-            <p style={{ color: 'var(--text-secondary)' }}>
-              Describe your concept, upload a creator photo, and configure cinematic constraints.
+            <h1 className="page-title">What&apos;s the video?</h1>
+            <p className="page-subtitle" style={{ color: 'var(--text-secondary)' }}>
+              Describe it and add the person and the product. Everything else has a sensible default you can change below.
             </p>
           </div>
           <SaveIndicator state={saveState} onRetry={saveNow} />
         </header>
 
-        {error && (
-          <div
-            style={{
-              padding: '12px 16px',
-              backgroundColor: 'var(--color-error-light)',
-              color: 'var(--color-error)',
-              borderRadius: 'var(--radius-btn)',
-              fontSize: '0.875rem',
-              marginBottom: '24px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <span>{error}</span>
-          </div>
-        )}
+        {error && <p className="page-alert" role="alert">{error}</p>}
 
-        {/* Two-Column Grid: Form (~60%) + Settings Panel (~40%) */}
-        <form onSubmit={handleGenerateScenes}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
-              gap: '32px',
-              alignItems: 'start',
-            }}
-          >
-            {/* Left Column: Main Form */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-              <ReferenceVideoCard
-                project={project}
-                storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
-                onApply={applyReference}
-                onBreakdownChange={handleBreakdownChange}
-                disabled={generating}
+        <form className="idea-form" onSubmit={handleGenerateScenes}>
+          <section className="card card-white" aria-labelledby="idea-heading">
+            <div className="form-group">
+              <label className="label idea-label" id="idea-heading" htmlFor="idea-text">Your idea</label>
+              <textarea
+                id="idea-text"
+                className="textarea"
+                rows={4}
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
+                placeholder="e.g. A student shows the app she uses to buy lecture notes from people who already took the class, filmed selfie-style in her room."
+                required
               />
+            </div>
 
-              <div className="card card-white">
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '16px' }}>
-                  Core Video Concept
-                </h3>
-
-                {/* Idea Textarea */}
-                <div className="form-group">
-                  <label className="label">What's your video idea?</label>
-                  <textarea
-                    className="textarea"
-                    rows={4}
-                    value={idea}
-                    onChange={(e) => setIdea(e.target.value)}
-                    placeholder="e.g. A casual college student sharing how they made extra money selling lecture summaries, showing an unfiltered selfie-camera perspective..."
-                    required
-                  />
-                </div>
-
-                {/* Image Upload Component */}
+            <div className="idea-pictures">
+              <div>
                 <ImageUpload
-                  label="Starting Image of Person"
-                  description="Upload a photo of the person/creator speaking (PNG or JPG). Scene 1 will begin from this image."
+                  label="The person"
+                  description="A photo of whoever speaks. The first scene starts from it."
                   previewUrl={imagePreviewUrl}
                   onUpload={handleImageFileSelect}
                   onRemove={() => {
@@ -590,392 +568,325 @@ function CreateIdea({ projectId: id }) {
                     setImagePreviewUrl('');
                   }}
                 />
-                {uploadingImage && (
-                  <div style={{ marginTop: '8px', fontSize: '0.8125rem', color: 'var(--color-accent)' }}>
-                    <LoadingSpinner size="sm" label="Uploading photo to secure storage..." />
-                  </div>
-                )}
+                {uploadingImage && <LoadingSpinner size="sm" label="Uploading the photo…" />}
               </div>
-
-              <AssetBibleCard
-                value={assetBible}
-                onChange={setAssetBible}
-                idea={idea}
-                scriptModel={scriptModelId}
-                disabled={generating}
+              <ReferenceImageUploader
+                label="The product and anything else to show"
+                hint="Optional. Say what each picture is, e.g. “The product: a matte black water bottle”."
+                images={project?.globalImages || []}
+                maxImages={pictureLimit}
+                storagePrefix={user ? `users/${user.uid}/projects/${id}/context` : ''}
+                onChange={(next) => updateProject(id, { globalImages: next })}
+                budgetNote={`Used in every scene. Each scene can use ${pictureLimit} pictures in total, so leave room if you plan to add scene-specific ones on the Script step.`}
               />
-
-              <div className="card card-white">
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '4px' }}>
-                  Context Pictures <span style={{ fontWeight: 500, color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>(optional)</span>
-                </h3>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                  Applied to every scene. The script writer and the video model both get them.
-                </p>
-                <ReferenceImageUploader
-                  label="Video-wide pictures"
-                  hint="Products, places, outfits or other people that should appear. Say what each one is, e.g. “The product: a matte black water bottle”."
-                  images={project?.globalImages || []}
-                  maxImages={pictureLimit}
-                  storagePrefix={user ? `users/${user.uid}/projects/${id}/context` : ''}
-                  onChange={(next) => updateProject(id, { globalImages: next })}
-                  budgetNote={`Each scene can use ${pictureLimit} pictures in total. Video-wide pictures count towards every scene, so leave room if you plan to add scene-specific ones. You can also change them on the Script step.`}
-                />
-              </div>
-
-              <div className="card card-white">
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '16px' }}>
-                  Pacing & Script Configuration
-                </h3>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '16px',
-                    marginBottom: '16px',
-                  }}
-                >
-                  {/* Number of scenes */}
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="label">Number of Scenes (1-10)</label>
-                    <input
-                      type="number"
-                      className="input"
-                      min={1}
-                      max={10}
-                      value={numScenes}
-                      disabled={followsReference}
-                      onChange={(e) => setNumScenes(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)))}
-                    />
-                    {followsReference && (
-                      <span style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)' }}>
-                        One scene per part of the reference video
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Words per scene */}
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label className="label">Words per Scene</label>
-                    <input
-                      type="number"
-                      className="input"
-                      min={5}
-                      max={100}
-                      value={wordsPerScene}
-                      onChange={(e) => {
-                        setWordsCustomized(true);
-                        setWordsPerScene(parseInt(e.target.value, 10) || 20);
-                      }}
-                    />
-                    <span style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary)' }}>
-                      Auto-calc: ~{Math.round(duration * 2.5)} words for {duration}s duration
-                    </span>
-                  </div>
-                </div>
-
-                {/* Hook Style Dropdown */}
-                <div className="form-group">
-                  <label className="label">Hook Style</label>
-                  <select
-                    className="select"
-                    value={hookStyle}
-                    onChange={(e) => setHookStyle(e.target.value)}
-                  >
-                    {HOOK_STYLES.map((style) => (
-                      <option key={style} value={style}>
-                        {style}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Custom Hook Description if Custom Hook selected */}
-                {hookStyle === 'Custom Hook' && (
-                  <div className="form-group">
-                    <label className="label">Custom Hook Description</label>
-                    <textarea
-                      className="textarea"
-                      rows={2}
-                      value={customHookDesc}
-                      onChange={(e) => setCustomHookDesc(e.target.value)}
-                      placeholder="Define your own custom hook (e.g. Start by whispering a secret directly into the phone microphone...)"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {confirmingRegenerate && (
-                <div className="gen-note is-warning" role="alertdialog" aria-labelledby="regen-title" style={{ padding: '14px 16px' }}>
-                  <p id="regen-title" style={{ fontWeight: 600, marginBottom: '6px' }}>Replace the current script?</p>
-                  <p style={{ marginBottom: '12px' }}>
-                    The text of all {scenes.length} {scenes.length === 1 ? 'scene' : 'scenes'} is rewritten, including your edits.
-                    {numScenes < scenes.length
-                      ? ` Scenes ${numScenes + 1} and up are deleted with their videos.`
-                      : ''}
-                    {scenesWithVideo > 0
-                      ? ' Videos of the scenes that stay are kept, but they will no longer match the new script.'
-                      : ''}
-                  </p>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button type="submit" id="create-regenerate-confirm" className="btn btn-primary btn-sm" disabled={generating}>
-                      Replace the script
-                    </button>
-                    <button
-                      type="button"
-                      id="create-regenerate-cancel"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setConfirmingRegenerate(false)}
-                    >
-                      Keep the current script
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Submit / Navigation Buttons */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px', gap: '12px' }}>
-                {project && project.status && project.status !== 'draft' && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-lg"
-                    onClick={handleSaveAndContinue}
-                    disabled={generating || uploadingImage}
-                  >
-                    Continue to Scenes →
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  className="btn btn-primary btn-lg"
-                  disabled={generating || uploadingImage}
-                  style={{ minWidth: '200px' }}
-                >
-                  {generating ? (
-                    <LoadingSpinner size="sm" label="Generating Scenes..." />
-                  ) : (
-                    <>
-                      <span>{project && project.status !== 'draft' ? 'Regenerate Scenes' : 'Generate Scenes'}</span>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="9 18 15 12 9 6" />
-                      </svg>
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
+          </section>
 
-            {/* Right Column: Settings Panel */}
-            <div
-              className="card card-white"
-              style={{
-                position: 'sticky',
-                top: '84px',
-              }}
-            >
-              <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '16px' }}>
-                Video Parameters & AI Models
-              </h3>
-
-              {/* Aspect Ratio */}
+          <section className="card card-white" aria-labelledby="format-heading">
+            <h2 className="idea-heading" id="format-heading">Format and look</h2>
+            <div className="idea-format">
               <div className="form-group">
-                <label className="label">Aspect Ratio</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <span className="label" id="aspect-label">Shape</span>
+                <div className="music-segmented" role="group" aria-labelledby="aspect-label">
                   {aspectRatioOptions.map((ratio) => (
                     <button
                       key={ratio}
                       type="button"
-                      className={`btn ${aspectRatio === ratio ? 'btn-primary' : 'btn-secondary'}`}
+                      className={`music-seg ${aspectRatio === ratio ? 'is-active' : ''}`}
+                      aria-pressed={aspectRatio === ratio}
                       onClick={() => setAspectRatio(ratio)}
-                      style={{ padding: '8px' }}
                     >
-                      {ratio} {ratio === '9:16' ? '(Portrait)' : '(Landscape)'}
+                      {ratio === '9:16' ? 'Vertical' : ratio === '16:9' ? 'Wide' : ratio}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Duration Slider (5-8s) */}
               <div className="form-group">
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <label className="label" style={{ marginBottom: 0 }}>Scene Duration</label>
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--color-accent)' }}>
-                    {duration} seconds
-                  </span>
-                </div>
+                <label className="label" htmlFor="idea-scenes">Scenes</label>
                 <input
-                  type="range"
-                  min={Math.min(...durationOptions)}
-                  max={Math.max(...durationOptions)}
-                  step="1"
-                  value={duration}
-                  onChange={(e) => handleDurationChange(parseInt(e.target.value, 10))}
-                  style={{ width: '100%', cursor: 'pointer' }}
-                  aria-label="Scene duration in seconds"
+                  id="idea-scenes"
+                  type="number"
+                  className="input"
+                  min={1}
+                  max={10}
+                  value={numScenes}
+                  disabled={followsReference}
+                  onChange={(e) => setNumScenes(Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)))}
                 />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+              </div>
+
+              <div className="form-group">
+                <span className="label" id="duration-label">Seconds per scene</span>
+                <div className="music-segmented" role="group" aria-labelledby="duration-label">
                   {durationOptions.map((d) => (
-                    <span key={d}>{d}s</span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Resolution & Accent */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div className="form-group">
-                  <label className="label">Resolution</label>
-                  <select
-                    className="select"
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                  >
-                    {resolutionOptions.map((r) => (
-                      <option key={r} value={r}>{r === '1080p' ? '1080p (upscaled)' : r}</option>
-                    ))}
-                  </select>
-                  <p className="field-hint">720p is the model's own size. 1080p is upscaled from it and costs more per second.</p>
-                </div>
-
-                <div className="form-group">
-                  <label className="label" htmlFor="create-accent">Speaker Accent</label>
-                  <select
-                    id="create-accent"
-                    className="select"
-                    value={accent}
-                    onChange={(e) => setAccent(e.target.value)}
-                  >
-                    {/* Older projects may have an accent that is no longer in the list; keep it selectable. */}
-                    {accent && !ACCENTS.some((a) => a.value === accent) && (
-                      <option value={accent}>{accent}</option>
-                    )}
-                    {ACCENTS.map((acc) => (
-                      <option key={acc.value || 'none'} value={acc.value}>
-                        {acc.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Models (the lists come from the backend) */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="label" htmlFor="create-script-model">Script Model</label>
-                  <select
-                    id="create-script-model"
-                    className="select"
-                    value={scriptModelId}
-                    onChange={(e) => setScriptModel(e.target.value)}
-                    disabled={!scriptModels.length}
-                  >
-                    {!scriptModels.length && <option value={scriptModelId}>Loading…</option>}
-                    {scriptModels.map((m) => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
-                  {scriptModels.find((m) => m.id === scriptModelId)?.description && (
-                    <p className="field-hint">{scriptModels.find((m) => m.id === scriptModelId).description}</p>
-                  )}
-                </div>
-
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="label" htmlFor="create-video-model">Video Model</label>
-                  <select
-                    id="create-video-model"
-                    className="select"
-                    value={videoModelId}
-                    onChange={(e) => handleVideoModelChange(e.target.value)}
-                    disabled={!videoModels.length}
-                  >
-                    {!videoModels.length && <option value={videoModelId}>Loading…</option>}
-                    {videoModels.map((m) => (
-                      <option key={m.id} value={m.id}>{m.label}</option>
-                    ))}
-                  </select>
-                  {selectedVideoModel?.description && (
-                    <p className="field-hint">{selectedVideoModel.description}</p>
-                  )}
-                </div>
-              </div>
-              {modelsError && (
-                <p className="field-hint" role="alert" style={{ color: 'var(--color-error)', marginTop: '-8px', marginBottom: '16px' }}>
-                  {modelsError} The default models will be used.
-                </p>
-              )}
-
-              <section className="guidelines-section" aria-labelledby="guidelines-heading">
-                <div className="guidelines-head">
-                  <h4 id="guidelines-heading" className="guidelines-title">Style Guidelines</h4>
-                  {hasAnyGuideline && (
-                    <button type="button" className="link-button" onClick={clearGuidelines}>
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                <p className="field-hint" style={{ marginTop: 0, marginBottom: '12px' }}>
-                  Only what you add here is used. They guide the script and are added to every scene's video prompt.
-                </p>
-
-                <div className="preset-label" id="preset-label">Start from a look</div>
-                <div className="preset-grid" role="group" aria-labelledby="preset-label">
-                  {GUIDELINE_PRESETS.map((preset) => (
                     <button
-                      key={preset.id}
+                      key={d}
                       type="button"
-                      className={`preset-card ${activePresetId === preset.id ? 'is-active' : ''}`}
-                      aria-pressed={activePresetId === preset.id}
-                      onClick={() => applyPreset(preset)}
-                      title={preset.description}
+                      className={`music-seg ${duration === d ? 'is-active' : ''}`}
+                      aria-pressed={duration === d}
+                      onClick={() => handleDurationChange(d)}
                     >
-                      <span className="preset-name">{preset.label}</span>
-                      <span className="preset-desc">{preset.description}</span>
+                      {d}
                     </button>
                   ))}
                 </div>
+              </div>
+            </div>
+            <p className="field-hint">
+              About {totalSeconds} seconds in total.
+              {followsReference ? ' One scene per part of the reference video.' : ''}
+            </p>
 
-                {GUIDELINE_CATEGORIES.map((category) => {
-                  const [tags, setTags] = guidelineState[category.key];
-                  return (
-                    <div key={category.key}>
-                      <TagInput
-                        label={category.label}
-                        hint={category.hint}
-                        tags={tags}
-                        suggestions={GUIDELINE_SUGGESTIONS[category.key]}
-                        onChange={setTags}
-                        maxTags={10}
-                      />
-                      {category.key === 'audio' && (
-                        <div className="form-group scene-audio-group">
-                          <span className="label" id="scene-audio-label">Scene audio</span>
-                          <fieldset className="start-picker" aria-labelledby="scene-audio-label">
-                            {SCENE_AUDIO_OPTIONS.map((option) => (
-                              <label key={option.value} className="start-option" htmlFor={`scene-audio-${option.value}`}>
-                                <input
-                                  type="radio"
-                                  id={`scene-audio-${option.value}`}
-                                  name="scene-audio"
-                                  value={option.value}
-                                  checked={sceneAudio === option.value}
-                                  onChange={() => setSceneAudio(option.value)}
-                                />
-                                <span className="start-option-title">{option.title}</span>
-                                <span className="start-option-sub">{option.sub}</span>
-                              </label>
-                            ))}
-                          </fieldset>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </section>
+            <div className="guidelines-head" style={{ marginTop: '18px' }}>
+              <span className="label" id="preset-label" style={{ marginBottom: 0 }}>Look</span>
+              {hasAnyGuideline && (
+                <button type="button" className="link-button" onClick={clearGuidelines}>Clear</button>
+              )}
+            </div>
+            <div className="preset-grid is-wide" role="group" aria-labelledby="preset-label">
+              {GUIDELINE_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className={`preset-card ${activePresetId === preset.id ? 'is-active' : ''}`}
+                  aria-pressed={activePresetId === preset.id}
+                  onClick={() => applyPreset(preset)}
+                >
+                  <span className="preset-name">{preset.label}</span>
+                  <span className="preset-desc">{preset.description}</span>
+                </button>
+              ))}
+            </div>
+            <p className="field-hint">
+              {activePresetId
+                ? 'Fine-tune it under “Style details” below.'
+                : hasAnyGuideline
+                  ? 'Using your own style details (see below).'
+                  : 'Optional. Without one, the look comes from your idea and pictures alone.'}
+            </p>
+          </section>
+
+          <ReferenceVideoCard
+            project={project}
+            storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
+            onApply={applyReference}
+            onBreakdownChange={handleBreakdownChange}
+            disabled={generating}
+          />
+
+          <Disclosure
+            title="Consistent details"
+            note={detailsFilled ? `${detailsFilled} of 4 filled in` : 'Written for you with the script'}
+          >
+            <AssetBibleCard
+              embedded
+              value={assetBible}
+              onChange={setAssetBible}
+              idea={idea}
+              scriptModel={scriptModelId}
+              disabled={generating}
+            />
+          </Disclosure>
+
+          <Disclosure title="Script options" note={`${hookSummary} · ${wordsPerScene} words per scene`}>
+            <div className="field-grid">
+              <div className="form-group">
+                <label className="label" htmlFor="idea-hook">Hook</label>
+                <select id="idea-hook" className="select" value={hookStyle} onChange={(e) => setHookStyle(e.target.value)}>
+                  {HOOK_STYLES.map((style) => (
+                    <option key={style} value={style}>{style}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="label" htmlFor="idea-words">Words per scene</label>
+                <input
+                  id="idea-words"
+                  type="number"
+                  className="input"
+                  min={5}
+                  max={100}
+                  value={wordsPerScene}
+                  onChange={(e) => {
+                    setWordsCustomized(true);
+                    setWordsPerScene(parseInt(e.target.value, 10) || 20);
+                  }}
+                />
+                <p className="field-hint">About {Math.round(duration * 2.5)} words fit in {duration} seconds.</p>
+              </div>
+            </div>
+            {hookStyle === 'Custom Hook' && (
+              <div className="form-group">
+                <label className="label" htmlFor="idea-custom-hook">Your hook</label>
+                <textarea
+                  id="idea-custom-hook"
+                  className="textarea"
+                  rows={2}
+                  value={customHookDesc}
+                  onChange={(e) => setCustomHookDesc(e.target.value)}
+                  placeholder="e.g. Start by whispering a secret straight into the phone microphone."
+                />
+              </div>
+            )}
+            <div className="form-group">
+              <label className="label" htmlFor="create-accent">Speaker accent</label>
+              <select id="create-accent" className="select" value={accent} onChange={(e) => setAccent(e.target.value)}>
+                {/* Older projects may have an accent that is no longer in the list; keep it selectable. */}
+                {accent && !ACCENTS.some((a) => a.value === accent) && <option value={accent}>{accent}</option>}
+                {ACCENTS.map((acc) => (
+                  <option key={acc.value || 'none'} value={acc.value}>{acc.label}</option>
+                ))}
+              </select>
+            </div>
+          </Disclosure>
+
+          <Disclosure
+            title="Style details"
+            note={guidelineCount ? `${guidelineCount} ${guidelineCount === 1 ? 'guideline' : 'guidelines'}` : 'None'}
+          >
+            <p className="field-hint" style={{ marginTop: 0, marginBottom: '12px' }}>
+              Only what you add here is used. They guide the script and are added to every scene&apos;s video prompt.
+            </p>
+            {GUIDELINE_CATEGORIES.map((category) => {
+              const [tags, setTags] = guidelineState[category.key];
+              return (
+                <TagInput
+                  key={category.key}
+                  label={category.label}
+                  hint={category.hint}
+                  tags={tags}
+                  suggestions={GUIDELINE_SUGGESTIONS[category.key]}
+                  onChange={setTags}
+                  maxTags={10}
+                />
+              );
+            })}
+            <div className="form-group scene-audio-group">
+              <span className="label" id="scene-audio-label">Scene audio</span>
+              <fieldset className="start-picker" aria-labelledby="scene-audio-label">
+                {SCENE_AUDIO_OPTIONS.map((option) => (
+                  <label key={option.value} className="start-option" htmlFor={`scene-audio-${option.value}`}>
+                    <input
+                      type="radio"
+                      id={`scene-audio-${option.value}`}
+                      name="scene-audio"
+                      value={option.value}
+                      checked={sceneAudio === option.value}
+                      onChange={() => setSceneAudio(option.value)}
+                    />
+                    <span className="start-option-title">{option.title}</span>
+                    <span className="start-option-sub">{option.sub}</span>
+                  </label>
+                ))}
+              </fieldset>
+            </div>
+          </Disclosure>
+
+          <Disclosure title="Models and quality" note={`${resolution} · ${selectedVideoModel?.label || 'Default model'}`}>
+            <div className="field-grid">
+              <div className="form-group">
+                <label className="label" htmlFor="idea-resolution">Resolution</label>
+                <select id="idea-resolution" className="select" value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                  {resolutionOptions.map((r) => (
+                    <option key={r} value={r}>{r === '1080p' ? '1080p (upscaled)' : r}</option>
+                  ))}
+                </select>
+                <p className="field-hint">720p is the model&apos;s own size. 1080p is upscaled from it and costs more per second.</p>
+              </div>
+              <div className="form-group">
+                <label className="label" htmlFor="create-video-model">Video model</label>
+                <select
+                  id="create-video-model"
+                  className="select"
+                  value={videoModelId}
+                  onChange={(e) => handleVideoModelChange(e.target.value)}
+                  disabled={!videoModels.length}
+                >
+                  {!videoModels.length && <option value={videoModelId}>Loading…</option>}
+                  {videoModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+                {selectedVideoModel?.description && <p className="field-hint">{selectedVideoModel.description}</p>}
+              </div>
+              <div className="form-group">
+                <label className="label" htmlFor="create-script-model">Script model</label>
+                <select
+                  id="create-script-model"
+                  className="select"
+                  value={scriptModelId}
+                  onChange={(e) => setScriptModel(e.target.value)}
+                  disabled={!scriptModels.length}
+                >
+                  {!scriptModels.length && <option value={scriptModelId}>Loading…</option>}
+                  {scriptModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+                {scriptModels.find((m) => m.id === scriptModelId)?.description && (
+                  <p className="field-hint">{scriptModels.find((m) => m.id === scriptModelId).description}</p>
+                )}
+              </div>
+            </div>
+            {modelsError && (
+              <p className="field-hint" role="alert" style={{ color: 'var(--color-error)' }}>
+                {modelsError} The default models will be used.
+              </p>
+            )}
+          </Disclosure>
+
+          {confirmingRegenerate && (
+            <div className="gen-note is-warning" role="alertdialog" aria-labelledby="regen-title" style={{ padding: '14px 16px' }}>
+              <p id="regen-title" style={{ fontWeight: 600, marginBottom: '6px' }}>Replace the current script?</p>
+              <p style={{ marginBottom: '12px' }}>
+                The text of all {scenes.length} {scenes.length === 1 ? 'scene' : 'scenes'} is rewritten, including your edits.
+                {numScenes < scenes.length ? ` Scenes ${numScenes + 1} and up are deleted with their videos.` : ''}
+                {scenesWithVideo > 0 ? ' Videos of the scenes that stay are kept, but they will no longer match the new script.' : ''}
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button type="submit" id="create-regenerate-confirm" className="btn btn-primary btn-sm" disabled={generating}>
+                  Replace the script
+                </button>
+                <button type="button" id="create-regenerate-cancel" className="btn btn-ghost btn-sm" onClick={() => setConfirmingRegenerate(false)}>
+                  Keep the current script
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="gen-footer" role="region" aria-label="Write the script">
+            {hasScript ? (
+              <button type="button" className="btn btn-secondary" onClick={handleSaveAndContinue} disabled={busy}>
+                Keep the script →
+              </button>
+            ) : <span />}
+            <div className="gen-footer-end">
+              <div className="gen-footer-status">
+                <span className="gen-footer-count">{numScenes} {numScenes === 1 ? 'scene' : 'scenes'} · about {totalSeconds}s</span>
+                <p className="gen-footer-note">{generating ? progress || 'Working…' : 'Writing takes up to a minute. No video is made yet.'}</p>
+              </div>
+              <button type="submit" id="create-write-script" className="btn btn-primary" disabled={busy}>
+                {generating ? <LoadingSpinner size="sm" label="Writing…" /> : hasScript ? 'Write a new script' : 'Write the script →'}
+              </button>
             </div>
           </div>
         </form>
       </div>
     </Layout>
+  );
+}
+
+/** A section that stays folded until asked for, with a one-line summary of what is inside. */
+function Disclosure({ title, note, children }) {
+  return (
+    <details className="card card-white disclosure">
+      <summary>
+        <span className="disclosure-title">{title}</span>
+        {note && <span className="disclosure-note">{note}</span>}
+      </summary>
+      <div className="disclosure-body">{children}</div>
+    </details>
   );
 }
 

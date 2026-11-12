@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  signInWithCustomToken,
   signInWithPopup,
   signOut as fbSignOut,
   onAuthStateChanged,
@@ -7,6 +8,19 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../services/firebase';
 import { AuthContext } from './auth-context';
+
+// Development builds only: `await __devSignIn()` in the console signs in as the local test account.
+// It needs the backend running with MOCK_AUTH (see backend/app/routes/dev.py). Vite removes this
+// from production builds.
+if (import.meta.env.DEV) {
+  window.__devSignIn = async () => {
+    const response = await fetch('/api/dev/token', { headers: { Authorization: 'Bearer dev' } });
+    if (!response.ok) throw new Error('Start the backend with MOCK_AUTH=true first.');
+    const { token } = await response.json();
+    const { user } = await signInWithCustomToken(auth, token);
+    return user.uid;
+  };
+}
 
 /**
  * Asks the server whether this account is on the allowlist (GET /api/me). The server marks an

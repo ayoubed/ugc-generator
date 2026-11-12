@@ -8,8 +8,9 @@ import { assetBibleFilledCount, normalizeAssetBible } from '../utils/assetBible'
 /**
  * Idea page: the fixed details (products and props, speaker, setting) reused word for word in
  * every scene. "Fill in from my idea" drafts them with the script model; the user edits from there.
+ * `embedded` drops the card frame and title, for use inside a section that already has them.
  */
-export default function AssetBibleCard({ value, onChange, idea, scriptModel, disabled = false }) {
+export default function AssetBibleCard({ value, onChange, idea, scriptModel, disabled = false, embedded = false }) {
   const baseId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -33,16 +34,19 @@ export default function AssetBibleCard({ value, onChange, idea, scriptModel, dis
   };
 
   return (
-    <section className="card card-white asset-card" aria-labelledby={`${baseId}-title`}>
+    <section className={embedded ? 'asset-card' : 'card card-white asset-card'} aria-labelledby={embedded ? undefined : `${baseId}-title`} aria-label={embedded ? 'Consistent details' : undefined}>
       <div className="asset-head">
         <div>
-          <h3 className="asset-title" id={`${baseId}-title`}>
-            Consistent details
-            <span className="asset-optional">(recommended)</span>
-          </h3>
+          {!embedded && (
+            <h3 className="asset-title" id={`${baseId}-title`}>
+              Consistent details
+              <span className="asset-optional">(recommended)</span>
+            </h3>
+          )}
           <p className="asset-sub">
             Each scene is generated on its own, so anything shown in more than one scene needs one exact
             description. These are added to every scene, word for word.
+            {embedded ? ' Left empty, they are written from your idea when the script is written.' : ''}
           </p>
         </div>
         <button

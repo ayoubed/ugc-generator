@@ -3215,3 +3215,68 @@ a:hover {
   .ref-layout { grid-template-columns: 1fr; }
   .ref-video { position: static; max-width: 200px; }
 }
+
+/* Idea page: one column, essentials first, the rest folded */
+.idea-page { max-width: 880px; padding-top: 20px; }
+.idea-form { display: flex; flex-direction: column; gap: var(--space-5); }
+.idea-heading { font-size: 1.05rem; font-weight: 600; margin: 0 0 var(--space-4); }
+.idea-label { font-size: 1.05rem; font-weight: 600; }
+.idea-pictures { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.idea-pictures .form-group { margin-bottom: 0; }
+.idea-format { display: grid; grid-template-columns: 1.2fr 0.6fr 1.4fr; gap: var(--space-4); align-items: start; }
+.idea-format .form-group { margin-bottom: 0; }
+.idea-format .music-segmented { display: flex; width: 100%; }
+.idea-format .music-seg { flex: 1; }
+.preset-grid.is-wide { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 0; }
+.field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-4); }
+
+.disclosure { padding: 0; }
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-4) var(--space-5);
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--radius-card);
+}
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure > summary::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-right: 2px solid var(--text-tertiary);
+  border-bottom: 2px solid var(--text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform var(--transition-fast);
+}
+.disclosure[open] > summary::before { transform: rotate(45deg); }
+.disclosure > summary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25); }
+.disclosure-title { font-size: 1rem; font-weight: 600; }
+.disclosure-note { margin-left: auto; font-size: 0.8125rem; color: var(--text-tertiary); text-align: right; }
+.disclosure-body { padding: 0 var(--space-5) var(--space-5); }
+.disclosure-body .asset-card { padding: 0; }
+
+@media (max-width: 640px) {
+  .container, .container-narrow { padding: 0 var(--space-4); }
+  .idea-pictures, .field-grid { grid-template-columns: minmax(0, 1fr); }
+  .idea-format { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .idea-format > :last-child { grid-column: 1 / -1; }
+  .preset-grid.is-wide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .disclosure > summary { flex-wrap: wrap; }
+  .disclosure-note { flex-basis: 100%; margin-left: 17px; text-align: left; }
+  .card { padding: var(--space-4); }
+  .disclosure { padding: 0; }
+  .disclosure > summary { padding: var(--space-4); }
+  .disclosure-body { padding: 0 var(--space-4) var(--space-4); }
+
+  /* The stitch / write bar: status on one line, then the two buttons side by side. */
+  .gen-footer { gap: var(--space-2); padding: 10px 12px; bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px)); }
+  .gen-footer-end { display: contents; }
+  .gen-footer-status { order: -1; flex-basis: 100%; flex-direction: row; align-items: baseline; gap: var(--space-2); }
+  .gen-footer-count { white-space: nowrap; }
+  .gen-footer-note { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; }
+  .gen-footer > .btn, .gen-footer-end > .btn { flex: 1 1 0; min-width: 0; padding-left: 10px; padding-right: 10px; white-space: nowrap; }
+  .gen-footer > span:empty { display: none; }
+}

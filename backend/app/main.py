@@ -97,6 +97,10 @@ app.include_router(models_router, prefix="/api", tags=["Models"])
 app.include_router(music_router, prefix="/api", tags=["Music"])
 app.include_router(projects_router, prefix="/api", tags=["Projects"])
 app.include_router(reference_router, prefix="/api", tags=["Reference"])
+if os.environ.get("MOCK_AUTH", "").lower() in ("1", "true"):
+    # Local development only: lets the frontend sign in as the test account (see routes/dev.py).
+    from app.routes.dev import router as dev_router
+    app.include_router(dev_router, prefix="/api", tags=["Dev"])
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ export default function Layout({ children }) {
         <div className="container app-header-content">
           <Link to="/" className="brand-logo">
             <span style={{ fontSize: '1.25rem' }}>🎬</span>
-            <span>UGC Studio</span>
+            <span>Eleviat</span>
           </Link>
 
           {user && (

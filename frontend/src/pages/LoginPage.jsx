@@ -68,10 +68,10 @@ export default function LoginPage() {
         {/* Logo */}
         <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>🎬</div>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px' }}>
-          UGC Studio
+          Eleviat
         </h1>
         <p style={{ fontSize: '0.9375rem', color: 'var(--text-secondary)', marginBottom: '32px' }}>
-          Generate authentic UGC videos with AI
+          Turn a product photo and an idea into a ready-to-post video ad.
         </p>
 
         {error && (
@@ -140,7 +140,8 @@ export default function LoginPage() {
         </button>
 
         <div style={{ marginTop: '32px', fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-          By signing in, you agree to generate authentic UGC video assets.
+          Access is by invitation.{' '}
+          <a href="https://eleviat.com/#apply" target="_blank" rel="noreferrer">Apply at eleviat.com</a>
         </div>
       </div>
     </div>

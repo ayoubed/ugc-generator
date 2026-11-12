@@ -263,3 +263,7 @@ def test_delete_removes_the_project_its_scenes_and_files_and_stops_takes(api, mo
     assert response.json() == {"project_id": "p1", "status": "deleted", "files_removed": 4}
     assert not any(path.startswith("projects/") for path in api.db.store)
     assert api.db.store["jobs/job1"]["cancelRequested"] is True
+
+
+def test_dev_sign_in_route_does_not_exist_outside_local_test_mode(api):
+    assert api.get("/api/dev/token").status_code == 404
