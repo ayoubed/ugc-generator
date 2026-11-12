@@ -16,7 +16,13 @@ import { extractAssets, generateScenes, resolveStorageUrl } from '../services/ap
 import { storage } from '../services/firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { isSceneBusy, maxReachableStep, sceneHasVideo, stepPath } from '../utils/projectProgress';
-import { assetBibleFilledCount, normalizeAssetBible, sameAssetBible } from '../utils/assetBible';
+import {
+  assetBibleFilledCount,
+  detailsSource,
+  normalizeAssetBible,
+  sameAssetBible,
+  shouldWriteDetails,
+} from '../utils/assetBible';
 import {
   MAX_STRUCTURE_SCENES,
   breakdownParts,
@@ -65,6 +71,8 @@ function CreateIdea({ projectId: id }) {
 
   // Fixed details reused in every scene (see utils/assetBible.js)
   const [assetBible, setAssetBible] = useState(() => normalizeAssetBible(null));
+  // What the app wrote the details from (see detailsSource), or '' once the user edited them.
+  const [detailsFrom, setDetailsFrom] = useState('');
 
   // Image Upload State
   const [selectedFile, setSelectedFile] = useState(null);
@@ -202,6 +210,7 @@ function CreateIdea({ projectId: id }) {
           if (s.visualTags) setVisualTags(s.visualTags);
           if (s.audioTags) setAudioTags(s.audioTags);
           if (s.assetBible) setAssetBible(normalizeAssetBible(s.assetBible));
+          if (typeof s.assetBibleFrom === 'string') setDetailsFrom(s.assetBibleFrom);
         }
         setReady(true);
       });
@@ -282,6 +291,7 @@ function CreateIdea({ projectId: id }) {
     visualTags,
     audioTags,
     assetBible,
+    assetBibleFrom: detailsFrom,
     ...overrides,
   });
 
@@ -448,18 +458,22 @@ function CreateIdea({ projectId: id }) {
       // Consistent details left empty are written from the idea first, so every scene describes
       // the person and product the same way. They can be edited on the Script step.
       let details = assetBible;
-      if (assetBibleFilledCount(assetBible) === 0) {
+      let writtenFrom = detailsFrom;
+      const source = detailsSource({ idea, productName, startingImageRef: finalImageRef, globalImages: project?.globalImages });
+      if (shouldWriteDetails(assetBible, detailsFrom, source)) {
         setProgress('Writing the consistent details…');
         try {
           details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId, id, productName));
           setAssetBible(details);
+          writtenFrom = source;
+          setDetailsFrom(source);
         } catch (err) {
           console.warn('Could not write the consistent details; continuing without them:', err);
         }
       }
 
       // Persist latest project settings to Firestore
-      await saveCurrentSettings(finalImageRef, { assetBible: details });
+      await saveCurrentSettings(finalImageRef, { assetBible: details, assetBibleFrom: writtenFrom });
       setProgress('Writing the script…');
 
       // Call Backend API to generate scenes
@@ -723,12 +737,18 @@ function CreateIdea({ projectId: id }) {
           <aside className="idea-side" aria-label="Options">
           <Disclosure
             title="Consistent details"
-            note={detailsFilled ? `${detailsFilled} of 4 filled in` : 'Written for you with the script'}
+            note={!detailsFilled ? 'Written for you with the script' : detailsFrom ? 'Written from your pictures' : `${detailsFilled} of 4 filled in`}
           >
             <AssetBibleCard
               embedded
               value={assetBible}
-              onChange={setAssetBible}
+              onChange={(next, info) => {
+                setAssetBible(next);
+                // Typed details are the user's from then on; ones the app just wrote can be refreshed.
+                setDetailsFrom(info?.written
+                  ? detailsSource({ idea, productName, startingImageRef, globalImages: project?.globalImages })
+                  : '');
+              }}
               idea={idea}
               projectId={id}
               productName={productName}

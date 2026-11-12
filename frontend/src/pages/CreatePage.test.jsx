@@ -97,7 +97,7 @@ describe('Idea step: writing the script', () => {
     const mine = { ...DETAILS, hero_props: 'A red mug with a white lid.' };
     const bar = open({ project: { settings: { assetBible: mine } } });
     await formLoaded();
-    expect(screen.getByText('4 of 4 filled in')).toBeTruthy();
+    expect(screen.getByText('4 of 4 filled in')).toBeTruthy();   // no record that the app wrote them: they are yours
 
     await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
     expect(await screen.findByText('script page')).toBeTruthy();
@@ -329,5 +329,51 @@ describe('Idea step: the product name', () => {
     open({ project: { settings: { productName: 'Luma One' } } });
     await formLoaded();
     await waitFor(() => expect(screen.getByLabelText('Product or brand name').value).toBe('Luma One'));
+  });
+});
+
+describe('Idea step: details the app wrote follow your pictures', () => {
+  const PHOTO = 'users/u1/projects/p1/starting_image.jpg';
+  const written = (from) => ({ assetBible: { ...DETAILS, character: 'An invented person.' }, assetBibleFrom: from });
+  const sourceNow = JSON.stringify(['A mug that keeps coffee hot all day.', '', PHOTO, []]);
+
+  it('remembers what the details were written from', async () => {
+    const bar = open();
+    await formLoaded();
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(saveProjectWithSettings.mock.calls.at(-1)[2].assetBibleFrom).toBe(sourceNow);
+  });
+
+  it('writes them again when the photo or a picture changed since', async () => {
+    const bar = open({ project: { settings: written(JSON.stringify(['A mug that keeps coffee hot all day.', '', 'old_photo.jpg', []])) } });
+    await formLoaded();
+    expect(screen.getByText('Written from your pictures')).toBeTruthy();
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(extractAssets).toHaveBeenCalledTimes(1);
+    expect(generateScenes.mock.calls[0][1].asset_bible).toEqual(DETAILS);
+    expect(saveProjectWithSettings.mock.calls.at(-1)[2].assetBibleFrom).toBe(sourceNow);
+  });
+
+  it('leaves them alone when nothing they were written from changed', async () => {
+    const bar = open({ project: { settings: written(sourceNow) } });
+    await formLoaded();
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(extractAssets).not.toHaveBeenCalled();
+    expect(generateScenes.mock.calls[0][1].asset_bible.character).toBe('An invented person.');
+  });
+
+  it('never replaces details you edited yourself', async () => {
+    const bar = open({ project: { settings: written('something older') } });
+    await formLoaded();
+    screen.getByText('Consistent details').closest('details').open = true;
+    await userEvent.type(screen.getByLabelText('Speaker'), ' She wears a brown headscarf.');
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(extractAssets).not.toHaveBeenCalled();
+    expect(generateScenes.mock.calls[0][1].asset_bible.character).toBe('An invented person. She wears a brown headscarf.');
+    expect(saveProjectWithSettings.mock.calls.at(-1)[2].assetBibleFrom).toBe('');
   });
 });

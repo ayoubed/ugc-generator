@@ -50,3 +50,25 @@ export function sameAssetBible(a, b) {
   const squash = (s) => s.replace(/\s+/g, ' ').trim();
   return ASSET_BIBLE_FIELDS.every(({ key }) => squash(x[key]) === squash(y[key]));
 }
+
+/**
+ * What the consistent details were written from: the idea, the product name, the creator photo and
+ * the video-wide pictures. Saved next to details the app wrote (settings.assetBibleFrom), so they
+ * can be written again when one of these changes. Empty for details the user typed or edited.
+ */
+export function detailsSource({ idea = '', productName = '', startingImageRef = '', globalImages = [] } = {}) {
+  const pictures = (globalImages || [])
+    .filter((picture) => picture?.storageRef)
+    .map((picture) => `${picture.storageRef}:${(picture.description || '').trim()}`);
+  return JSON.stringify([idea.trim(), productName.trim(), startingImageRef || '', pictures]);
+}
+
+/**
+ * Whether the details have to be written (again) before the script: when they are empty, or when
+ * the app wrote them and what they were written from has changed since (a new photo, another
+ * product picture, a different idea). Details the user typed or edited are never replaced.
+ */
+export function shouldWriteDetails(assetBible, writtenFrom, source) {
+  if (assetBibleFilledCount(assetBible) === 0) return true;
+  return Boolean(writtenFrom) && writtenFrom !== source;
+}

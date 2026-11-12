@@ -7,7 +7,7 @@ import { assetBibleFilledCount, normalizeAssetBible } from '../utils/assetBible'
 
 /**
  * Idea page: the fixed details (products and props, speaker, setting) reused word for word in
- * every scene. "Fill in from my idea" drafts them with the script model; the user edits from there.
+ * every scene. "Fill in from my pictures" drafts them with the script model; the user edits from there.
  * `embedded` drops the card frame and title, for use inside a section that already has them.
  */
 export default function AssetBibleCard({ value, onChange, idea, projectId = null, productName = '', scriptModel, disabled = false, embedded = false }) {
@@ -24,7 +24,8 @@ export default function AssetBibleCard({ value, onChange, idea, projectId = null
     setBusy(true);
     setError('');
     try {
-      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel, projectId, productName)));
+      // The second argument tells the page these were written by the app, not typed.
+      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel, projectId, productName)), { written: true });
     } catch (err) {
       console.error('Could not fill in the details:', err);
       setError(friendlyError(err));
@@ -46,7 +47,7 @@ export default function AssetBibleCard({ value, onChange, idea, projectId = null
           <p className="asset-sub">
             Each scene is generated on its own, so anything shown in more than one scene needs one exact
             description. These are added to every scene, word for word.
-            {embedded ? ' Left empty, they are written from your idea and pictures when the script is written.' : ''}
+            {embedded ? ' Left empty, they are written from your photo, your pictures and your idea when the script is written, and written again if you change those. Once you edit them, they stay as you wrote them.' : ''}
           </p>
         </div>
         <button
@@ -57,7 +58,7 @@ export default function AssetBibleCard({ value, onChange, idea, projectId = null
           disabled={disabled || busy || !hasIdea}
           title={hasIdea ? undefined : 'Write your video idea first'}
         >
-          {busy ? <LoadingSpinner size="sm" label="Writing…" /> : filled > 0 ? 'Rewrite from my idea' : 'Fill in from my idea'}
+          {busy ? <LoadingSpinner size="sm" label="Writing…" /> : filled > 0 ? 'Rewrite from my pictures' : 'Fill in from my pictures'}
         </button>
       </div>
 
