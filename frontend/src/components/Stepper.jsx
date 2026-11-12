@@ -4,14 +4,13 @@ const STEPS = [
   { number: 1, title: 'Idea' },
   { number: 2, title: 'Script' },
   { number: 3, title: 'Generate' },
-  { number: 4, title: 'Finish' },
-  { number: 5, title: 'Export' },
+  { number: 4, title: 'Video' },
 ];
 
 /**
- * Stepper component indicating the 5-step workflow:
- * 1. Idea -> 2. Script -> 3. Generate -> 4. Finish -> 5. Export
- * @param {number} currentStep - 1 to 5
+ * Stepper component indicating the 4-step workflow:
+ * 1. Idea -> 2. Script -> 3. Generate -> 4. Video
+ * @param {number} currentStep - 1 to 4
  * @param {function} onStepClick - Optional callback (stepNumber) => void
  * @param {number} maxReachableStep - Highest step the user may jump to (defaults to currentStep).
  *   Lets people go forward again after stepping back, e.g. from Script straight to their final video.

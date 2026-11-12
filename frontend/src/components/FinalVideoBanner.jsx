@@ -15,7 +15,7 @@ import {
  *
  * @param {object}   project
  * @param {Array}    scenes       Current scenes (used to tell whether the final video is out of date)
- * @param {function} onOpenExport Opens the Export page
+ * @param {function} onOpenExport Opens the Video step
  * @param {string}   outdatedHint What to do when the final video no longer matches the scenes
  * @param {node}     children     Extra page-specific actions
  */
@@ -101,7 +101,7 @@ export default function FinalVideoBanner({
           {children}
           {(current || stitching) && onOpenExport && (
             <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenExport}>
-              Open Export
+              Open the Video step
             </button>
           )}
         </div>

@@ -296,7 +296,7 @@ export function projectCaptionStyle(project) {
 }
 
 /**
- * The caption text of a scene: what the user typed on the Finish step, otherwise the script.
+ * The caption text of a scene: what the user typed on the Video step, otherwise the script.
  * An empty text means "no caption on this scene".
  */
 export function sceneCaptionText(project, scene) {
@@ -427,17 +427,17 @@ export function formatSceneList(numbers) {
 
 /**
  * Highest step the user can jump to from the stepper.
- * Steps: 1 Idea, 2 Script, 3 Generate, 4 Finish (captions, cuts, music, stitch), 5 Export.
+ * Steps: 1 Idea, 2 Script, 3 Generate, 4 Video (captions, cuts, music, stitch, watch, download).
  */
-export const STEP = { IDEA: 1, SCRIPT: 2, GENERATE: 3, FINISH: 4, EXPORT: 5 };
+export const STEP = { IDEA: 1, SCRIPT: 2, GENERATE: 3, VIDEO: 4 };
 
 export function maxReachableStep(project, scenes) {
-  if (hasFinalVideo(project) || isStitching(project)) return 5;
-  if (scenes ? scenes.length > 0 : ['scripted', 'generating', 'completed', 'failed'].includes(project?.status)) return 4;
+  if (hasFinalVideo(project) || isStitching(project)) return STEP.VIDEO;
+  if (scenes ? scenes.length > 0 : ['scripted', 'generating', 'completed', 'failed'].includes(project?.status)) return STEP.VIDEO;
   return 1;
 }
 
-const STEP_ROUTES = { 1: 'create', 2: 'scenes', 3: 'generate', 4: 'finish', 5: 'export' };
+const STEP_ROUTES = { 1: 'create', 2: 'scenes', 3: 'generate', 4: 'video' };
 
 /** Route of a stepper step for a project. */
 export function stepPath(projectId, step) {

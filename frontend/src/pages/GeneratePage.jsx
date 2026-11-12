@@ -105,7 +105,7 @@ function GenerateVideos({ projectId: id }) {
   const [saveState, setSaveState] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
   const [requesting, setRequesting] = useState({});
   const [sceneErrors, setSceneErrors] = useState({});
-  // Stitching is started on the Finish step; these keep the footer's wording in one place.
+  // Stitching is started on the Video step; these keep the footer's wording in one place.
   const stitchRequesting = false;
   const stitchError = '';
   const [pageError, setPageError] = useState('');
@@ -344,7 +344,7 @@ function GenerateVideos({ projectId: id }) {
     }
   };
 
-  // Captions, cuts and music are chosen on the Finish step, which also starts the stitch.
+  // Captions, cuts and music are chosen on the Video step, which also starts the stitch.
   const handleStitch = () => goTo(stepPath(id, 4));
 
   const jumpToScene = (sceneId) => {
@@ -418,8 +418,8 @@ function GenerateVideos({ projectId: id }) {
   if (busyNumbers.length) {
     overviewSub = `${listScenes(busyNumbers)} ${busyNumbers.length === 1 ? 'is' : 'are'} generating. Generation keeps going if you leave this page.`;
   } else if (ready) {
-    if (!finalVideo) overviewSub = 'Every scene has a video. Continue to the Finish step to add captions and music and stitch them.';
-    else if (finalReason) overviewSub = `${finalReason} Stitch a new version on the Finish step.`;
+    if (!finalVideo) overviewSub = 'Every scene has a video. Continue to the Video step to add captions and music and stitch them.';
+    else if (finalReason) overviewSub = `${finalReason} Stitch a new version on the Video step.`;
     else overviewSub = `${finalLabel} matches the takes in use.`;
   }
   if (skippedCount && !busyNumbers.length) {
@@ -427,12 +427,11 @@ function GenerateVideos({ projectId: id }) {
   }
 
   // The stitch bar: what is in the way, or what to do next.
-  const stitchLabel = finalVideo ? 'Finish a new version' : 'Finish the video';
+  const stitchLabel = finalVideo ? 'Stitch a new version' : 'Finish the video';
   let stitchNote = '';
   let stitchTone = '';
   let primaryAction = null;
-  let secondaryAction = null;
-  const openExport = () => goTo(stepPath(id, 5));
+  const openExport = () => goTo(stepPath(id, 4));
 
   if (stitching) {
     stitchNote = `Stitching your final video · ${formatElapsed(stitchElapsed)}`;
@@ -481,13 +480,6 @@ function GenerateVideos({ projectId: id }) {
         </button>
       );
     } else {
-      if (finalVideo) {
-        secondaryAction = (
-          <button type="button" id="gen-view-final" className="btn btn-ghost btn-lg" onClick={openExport} disabled={navigating}>
-            View current version
-          </button>
-        );
-      }
       primaryAction = (
         <button
           type="button"
@@ -543,7 +535,7 @@ function GenerateVideos({ projectId: id }) {
           project={project}
           scenes={mergedScenes}
           onOpenExport={openExport}
-          outdatedHint="Stitch a new version on the Finish step to update it."
+          outdatedHint="Stitch a new version on the Video step to update it."
         />
 
         {pageError && <p className="page-alert" role="alert">{pageError}</p>}
@@ -713,7 +705,6 @@ function GenerateVideos({ projectId: id }) {
                     {stitchNote}
                   </p>
                 </div>
-                {secondaryAction}
                 {primaryAction}
               </div>
             </div>

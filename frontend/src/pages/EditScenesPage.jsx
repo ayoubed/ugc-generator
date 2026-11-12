@@ -402,8 +402,8 @@ function EditScenes({ projectId: id }) {
         <FinalVideoBanner
           project={project}
           scenes={scenes}
-          onOpenExport={() => goTo(stepPath(id, 5))}
-          outdatedHint="Make new takes of the scenes you changed on the Generate step, then stitch again on the Finish step."
+          onOpenExport={() => goTo(stepPath(id, 4))}
+          outdatedHint="Make new takes of the scenes you changed on the Generate step, then stitch again on the Video step."
         />
 
         {actionError && <p className="page-alert" role="alert">{actionError}</p>}

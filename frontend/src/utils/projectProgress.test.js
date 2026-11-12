@@ -15,6 +15,7 @@ import {
   sceneChangesSinceTake,
   sceneLabels,
   sortScenes,
+  stepPath,
   STALE_STITCH_MS,
   toMillis,
 } from './projectProgress';
@@ -125,7 +126,8 @@ describe('journey', () => {
   it('opens later steps as the project gets there', () => {
     expect(maxReachableStep({ status: 'draft' }, [])).toBe(1);
     expect(maxReachableStep({ status: 'scripted' }, [{ id: '0' }])).toBe(4);
-    expect(maxReachableStep({ finalVideos: [{ version: 1, storageRef: 'f' }] }, [{ id: '0' }])).toBe(5);
+    expect(maxReachableStep({ finalVideos: [{ version: 1, storageRef: 'f' }] }, [{ id: '0' }])).toBe(4);
+    expect(stepPath('p1', 4)).toBe('/project/p1/video');
   });
 
   it('is ready to stitch only when every scene in the video has a finished take', () => {

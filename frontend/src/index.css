@@ -3280,3 +3280,18 @@ a:hover {
   .gen-footer > .btn, .gen-footer-end > .btn { flex: 1 1 0; min-width: 0; padding-left: 10px; padding-right: 10px; white-space: nowrap; }
   .gen-footer > span:empty { display: none; }
 }
+
+/* Video step: the result (player, versions) beside the choices (captions, music, end card) */
+.video-layout { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 28px; align-items: start; }
+.video-result { display: flex; flex-direction: column; gap: var(--space-4); scroll-margin-top: 84px; }
+.video-result .export-stage { padding: var(--space-3); }
+.video-result .export-stage.is-portrait .export-player { width: 100%; max-width: 230px; }
+.video-result .cap-preview { max-width: 230px; margin: 0 auto; }
+.video-result .export-alert { margin-bottom: 0; }
+.video-choices { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+.video-choices .music-card { max-width: none; margin: 0; }
+.video-style-preview { max-width: 150px; margin-top: var(--space-3); }
+.cap-texts > summary { cursor: pointer; margin-top: var(--space-4); }
+@media (max-width: 900px) {
+  .video-layout { grid-template-columns: minmax(0, 1fr); }
+}

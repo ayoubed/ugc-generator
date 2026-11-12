@@ -70,7 +70,7 @@ export default function DashboardPage() {
 
   const getRouteForProject = (project) => {
     const status = (project.status || 'draft').toLowerCase();
-    if (status === 'completed') return `/project/${project.id}/export`;
+    if (status === 'completed') return `/project/${project.id}/video`;
     if (status === 'generating') return `/project/${project.id}/generate`;
     if (status === 'scripted') return `/project/${project.id}/scenes`;
     return `/project/${project.id}/create`;

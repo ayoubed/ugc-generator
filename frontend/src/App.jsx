@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import LoadingSpinner from './components/LoadingSpinner';
 
@@ -9,8 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import CreatePage from './pages/CreatePage';
 import EditScenesPage from './pages/EditScenesPage';
 import GeneratePage from './pages/GeneratePage';
-import FinishPage from './pages/FinishPage';
-import ExportPage from './pages/ExportPage';
+import VideoPage from './pages/VideoPage';
 
 /**
  * Shown to a signed-in account that may not use the app: it is not on the allowlist, or the check
@@ -120,6 +119,11 @@ function PublicRoute({ children }) {
   return children;
 }
 
+function OldStepRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/project/${id}/video`} replace />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -167,21 +171,16 @@ export default function App() {
         }
       />
       <Route
-        path="/project/:id/finish"
+        path="/project/:id/video"
         element={
           <ProtectedRoute>
-            <FinishPage />
+            <VideoPage />
           </ProtectedRoute>
         }
       />
-      <Route
-        path="/project/:id/export"
-        element={
-          <ProtectedRoute>
-            <ExportPage />
-          </ProtectedRoute>
-        }
-      />
+      {/* Finish and Export were merged into the Video step; old links still work. */}
+      <Route path="/project/:id/finish" element={<OldStepRedirect />} />
+      <Route path="/project/:id/export" element={<OldStepRedirect />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
