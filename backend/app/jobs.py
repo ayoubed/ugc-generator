@@ -11,6 +11,7 @@ from firebase_admin import firestore
 from app.storage import upload_file, download_file, get_download_url, delete_file
 from app.model_registry import get_video_model, refine_model_for_take
 from app.captions import caption_style
+from app.errors import user_message
 from app.pipeline import (
     generate_scene_video,
     extract_last_frame,
@@ -808,13 +809,13 @@ def _run_video_generation_job_sync(
             commit_unless_cancelled(db, job_ref, [
                 (scene_ref, {
                     "videoStatus": "completed" if had_video else "failed",
-                    "errorMessage": str(e),
+                    "errorMessage": user_message(e, "Making the take"),
                     "failedAttempt": attempt,
                     "updatedAt": firestore.SERVER_TIMESTAMP,
                 }),
                 (job_ref, {
                     "status": "failed",
-                    "errorMessage": str(e),
+                    "errorMessage": user_message(e, "Making the take"),
                     "failedAt": firestore.SERVER_TIMESTAMP,
                 }),
             ])
@@ -996,8 +997,8 @@ def _run_stitch_job_sync(
             had_final = bool(project_data.get("finalVideoRef") or project_data.get("finalVideos"))
             project_ref.update({
                 "status": "completed" if had_final else "failed",
-                "errorMessage": str(e),
-                "stitchError": str(e),
+                "errorMessage": user_message(e, "Stitching the video"),
+                "stitchError": user_message(e, "Stitching the video"),
                 "updatedAt": firestore.SERVER_TIMESTAMP,
             })
         except Exception as update_err:
@@ -1180,4 +1181,4 @@ def _run_generate_all_sync(uid: str, project_id: str, stitch: bool) -> None:
 
     except Exception as e:
         logger.exception("Generate-all stopped for project %s: %s", project_id, e)
-        set_state(status="failed", error=str(e), current=None, currentNumber=None)
+        set_state(status="failed", error=user_message(e, "Generating the scenes"), current=None, currentNumber=None)

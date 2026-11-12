@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from firebase_admin import firestore
 
 from app.auth import get_current_user
+from app.errors import user_message
 from app.jobs import spawn_background
 from app.models import AnalyseReferenceRequest
 from app.pipeline import analyse_reference_video
@@ -71,7 +72,7 @@ def _run_reference_job_sync(project_id: str, storage_ref: str) -> None:
         try:
             project_ref.update({
                 "referenceStatus": "failed",
-                "referenceError": str(e)[:500],
+                "referenceError": user_message(e, "Breaking down the video"),
                 "updatedAt": firestore.SERVER_TIMESTAMP,
             })
         except Exception as update_err:

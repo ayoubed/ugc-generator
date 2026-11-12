@@ -16,6 +16,7 @@ from firebase_admin import firestore
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
+from app.errors import user_message
 from app.jobs import spawn_background
 from app.model_registry import get_music_model
 from app.pipeline import generate_music, MUSIC_VOLUMES
@@ -82,7 +83,7 @@ def _run_music_job_sync(uid: str, project_id: str, prompt: str, model_id: str, v
         try:
             project_ref.update({
                 "musicStatus": "failed",
-                "musicError": str(e),
+                "musicError": user_message(e, "Making the music"),
                 "updatedAt": firestore.SERVER_TIMESTAMP,
             })
         except Exception as update_err:

@@ -22,22 +22,13 @@ import {
   sceneTakes,
   takeCheck,
   toMillis,
+  isBusyAndFresh,
 } from '../utils/projectProgress';
 import { SCENE_AUDIO_VOICE_ONLY, projectSceneAudio } from '../data/guidelineTags';
 
 /** Same limit as the API (jobs.MAX_SAVED_TAKES): older takes are removed when a new one is saved. */
 const MAX_SAVED_TAKES = 3;
 
-/** Same limit the API uses before it lets a stuck take be started again. */
-export const STALE_JOB_MS = 15 * 60 * 1000;
-
-/** The scene is queued or generating, and has not been stuck for too long. */
-export function isBusyAndFresh(scene, now) {
-  if (!isSceneBusy(scene)) return false;
-  // A running take refreshes heartbeatAt about once a minute; updatedAt marks when it started.
-  const since = Math.max(toMillis(scene?.heartbeatAt) || 0, toMillis(scene?.updatedAt) || 0);
-  return Boolean(since) && now - since < STALE_JOB_MS;
-}
 
 function joinList(items) {
   if (items.length <= 1) return items[0] || '';

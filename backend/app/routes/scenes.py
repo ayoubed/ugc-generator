@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 import firebase_admin
 from firebase_admin import firestore
 from app.auth import get_current_user
+from app.errors import user_message
 from app.models import (
     GenerateScenesRequest,
     GenerateScenesResponse,
@@ -43,7 +44,7 @@ def extract_assets_endpoint(
         logger.exception("Asset Bible extraction failed")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Couldn't fill in the details: {e}",
+            detail=user_message(e, "Writing the details"),
         )
     return ExtractAssetsResponse(asset_bible=AssetBible(**data))
 
@@ -141,8 +142,8 @@ def generate_scenes_endpoint(
     except Exception as e:
         logger.exception(f"Failed to generate scenes with Gemini: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Script generation failed: {str(e)}",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=user_message(e, "Writing the script"),
         )
 
     raw_scenes = result.get("scenes", [])

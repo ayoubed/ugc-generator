@@ -15,6 +15,17 @@ export function isSceneBusy(scene) {
   return ACTIVE_VIDEO_STATUSES.includes(sceneStatus(scene));
 }
 
+/** Same limit the API uses before it lets a stuck take be started again. */
+export const STALE_JOB_MS = 15 * 60 * 1000;
+
+/** The scene is queued or generating, and has not been stuck for too long. */
+export function isBusyAndFresh(scene, now) {
+  if (!isSceneBusy(scene)) return false;
+  // A running take refreshes heartbeatAt about once a minute; updatedAt marks when it started.
+  const since = Math.max(toMillis(scene?.heartbeatAt) || 0, toMillis(scene?.updatedAt) || 0);
+  return Boolean(since) && now - since < STALE_JOB_MS;
+}
+
 /** A scene "has a video" once any take finished, even while a new take is being made. */
 export function sceneHasVideo(scene) {
   return Boolean(scene?.storageRef || scene?.videoUrl);

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import Stepper from '../components/Stepper';
 import FinalVideoBanner from '../components/FinalVideoBanner';
-import GenerateSceneCard, { isBusyAndFresh } from '../components/GenerateSceneCard';
+import GenerateSceneCard from '../components/GenerateSceneCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SaveIndicator from '../components/SaveIndicator';
 import { useAuth } from '../hooks/useAuth';
@@ -46,6 +46,7 @@ import {
   stitchStartedMillis,
   takeCheck,
   toMillis,
+  isBusyAndFresh,
 } from '../utils/projectProgress';
 
 const SAVE_DELAY_MS = 800;
