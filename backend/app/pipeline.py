@@ -15,7 +15,7 @@ from google.genai import types
 import difflib
 from app.models import Scene, SceneList, AssetBible, TakeCheckResult, ReferenceBreakdown
 from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID, REFERENCE_MODEL_ID
-from app.captions import build_ass, word_timings
+from app.captions import build_ass, fit_words_to_clip, word_timings
 from app.beats import music_fit_for_cuts
 
 logger = logging.getLogger(__name__)
@@ -1337,9 +1337,12 @@ def stitch_videos(
     caption_style: Optional[str] = None,
     tight_cuts: bool = True,
     end_card: Optional[Dict[str, Any]] = None,
+    caption_words: Optional[List[Optional[List[Tuple[str, float, float]]]]] = None,
 ) -> str:
     """
     Stitches scene videos into one video. `labels` name the clips in error messages ("Scene 2").
+    caption_words: optional, one entry per clip: when each caption word is spoken in the untrimmed
+    clip ([(word, start, end)]), or None to estimate that clip's timing from where speech is heard.
     end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
@@ -1409,9 +1412,12 @@ def stitch_videos(
 
         if caption_style and caption_texts:
             timed, offset = [], 0.0
-            for clip, text in zip(clips, caption_texts):
+            for index, (clip, text) in enumerate(zip(clips, caption_texts)):
                 d = max(0.05, clip["duration"])
-                words = word_timings(text or "", clip.get("speech") or [], d)
+                exact = caption_words[index] if caption_words and index < len(caption_words) else None
+                words = fit_words_to_clip(exact, clip["trim_start"], d) if exact else []
+                if not words:
+                    words = word_timings(text or "", clip.get("speech") or [], d)
                 timed.append([(w, offset + a, offset + b) for w, a, b in words])
                 offset += d
             if any(timed):

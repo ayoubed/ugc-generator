@@ -5,6 +5,7 @@ import {
   currentFinalVideo,
   effectiveImageSource,
   finalVideoChangeReason,
+  projectVoice,
   formatElapsed,
   formatSceneList,
   isStitchStuck,
@@ -78,6 +79,31 @@ describe('continuityNote', () => {
     const scene = { history: [take(1, { imageSource: 'last_frame', sourceSceneAttempt: 1 })], activeAttempt: 1 };
     expect(continuityNote(scene, { history: [take(1), take(2)], activeAttempt: 2 }, 'scene 1')).toContain('take 1 of scene 1');
     expect(continuityNote(scene, { history: [take(1)], activeAttempt: 1 })).toBe('');
+  });
+});
+
+describe('the voice of a final video', () => {
+  const scenes = [{ id: '0', activeAttempt: 1, storageRef: 'a.mp4' }];
+  const version = (voice) => ({ version: 1, scenes: [{ sceneId: '0', attempt: 1 }], ...(voice === undefined ? {} : { voice }) });
+  const withVoice = (voice) => ({ settings: { voice } });
+
+  it('reads the chosen voice, or none', () => {
+    expect(projectVoice(withVoice({ id: ' v1 ', name: 'Rachel' }))).toEqual({ id: 'v1', name: 'Rachel' });
+    [null, undefined, 'v1', { id: '' }, {}].forEach((voice) => expect(projectVoice(withVoice(voice))).toBeNull());
+    expect(projectVoice(null)).toBeNull();
+  });
+
+  it('marks a version out of date when the voice was picked, changed or removed', () => {
+    const reason = 'The voice changed since this version was stitched.';
+    expect(finalVideoChangeReason(version(null), scenes, withVoice({ id: 'v1', name: 'Rachel' }))).toBe(reason);
+    expect(finalVideoChangeReason(version({ id: 'v1', name: 'Rachel' }), scenes, withVoice({ id: 'v2', name: 'Adam' }))).toBe(reason);
+    expect(finalVideoChangeReason(version({ id: 'v1', name: 'Rachel' }), scenes, withVoice(null))).toBe(reason);
+  });
+
+  it('leaves a version alone when the voice is the same, or was never recorded', () => {
+    expect(finalVideoChangeReason(version({ id: 'v1', name: 'Rachel' }), scenes, withVoice({ id: 'v1', name: 'Renamed' }))).toBe('');
+    expect(finalVideoChangeReason(version(null), scenes, withVoice(null))).toBe('');
+    expect(finalVideoChangeReason(version(), scenes, withVoice({ id: 'v1', name: 'Rachel' }))).toBe('');
   });
 });
 

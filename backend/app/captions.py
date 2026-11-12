@@ -88,6 +88,23 @@ def word_timings(text: str, segments: List[Segment], duration: float) -> List[Wo
     return timed
 
 
+def fit_words_to_clip(words: List[Word], trim_start: float, duration: float) -> List[Word]:
+    """
+    Word times measured on a whole clip, moved to the part of it that is kept (from `trim_start`,
+    `duration` long). Words outside that part are dropped; ones on its edge are cut to fit.
+    """
+    fitted: List[Word] = []
+    for text, start, end in words:
+        a, b = start - trim_start, end - trim_start
+        if b <= 0 or a >= duration:
+            continue
+        a, b = max(0.0, a), min(duration, b)
+        if b - a < 0.04:
+            b = min(duration, a + 0.08)
+        fitted.append((text, round(a, 3), round(b, 3)))
+    return fitted
+
+
 def chunk_words(words: List[Word], max_words: int, max_chars: int) -> List[List[Word]]:
     """Groups words into short lines. A line ends at sentence punctuation or a pause."""
     chunks: List[List[Word]] = []

@@ -282,6 +282,13 @@ export function projectMusic(project) {
   return { ...music, volume: MUSIC_VOLUME_OPTIONS.some((o) => o.value === music.volume) ? music.volume : 'medium' };
 }
 
+/** The one voice chosen for the whole video ({id, name}), or null when each scene keeps its own. */
+export function projectVoice(project) {
+  const voice = project?.settings?.voice;
+  if (!voice || typeof voice !== 'object' || !String(voice.id || '').trim()) return null;
+  return { id: String(voice.id).trim(), name: String(voice.name || '').trim() };
+}
+
 /** Caption styles (same keys as backend/app/captions.py). Unset on a project means the default style. */
 export const CAPTION_OPTIONS = [
   { value: 'highlight', title: 'Word highlight', sub: 'A few words at a time, the spoken word lights up.' },
@@ -395,6 +402,10 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
             finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
         : '';
       if (now !== then) return 'The end card changed since this version was stitched.';
+    }
+    // Versions stitched before the voice choice existed have no voice field, so they aren't flagged.
+    if ('voice' in finalVideo && (finalVideo.voice?.id || '') !== (projectVoice(project)?.id || '')) {
+      return 'The voice changed since this version was stitched.';
     }
     if (typeof finalVideo.tightCuts === 'boolean' && finalVideo.tightCuts !== projectTightCuts(project)) {
       return 'The cut setting changed since this version was stitched.';

@@ -10,6 +10,7 @@ import firebase_admin
 from firebase_admin import firestore
 from app.storage import upload_file, download_file, get_download_url, delete_file
 from app.model_registry import get_video_model, refine_model_for_take
+from app import elevenlabs
 from app.captions import caption_style
 from app.errors import user_message
 from app.pipeline import (
@@ -29,6 +30,7 @@ from app.pipeline import (
     asset_bible_lines,
     GenerationCancelled,
 )
+from app.voiceover import caption_word_times, project_voice, revoiced_scene
 
 logger = logging.getLogger(__name__)
 
@@ -952,6 +954,31 @@ def _run_stitch_job_sync(
                 "seconds": card.get("seconds") if isinstance(card.get("seconds"), (int, float)) else None,
             }
 
+        # With ElevenLabs set up: exact caption timing, and one voice for the whole video when chosen.
+        voice = project_voice(project_data)
+        if voice and not elevenlabs.is_configured():
+            raise ValueError(
+                "One voice is chosen for this video, but the voice service is not set up on the server. "
+                "Choose \"Each scene's own voice\" on the Video step to stitch without it."
+            )
+        caption_words: List[Any] = [None] * len(scenes_list)
+        if captions and elevenlabs.is_configured():
+            # Timed on the scene's own audio: re-voicing keeps the timing, and this way the result
+            # is reused whatever voice is chosen later.
+            for position, (_, doc_id, data) in enumerate(scenes_list):
+                caption_words[position] = caption_word_times(
+                    project_ref.collection("scenes").document(doc_id), data, data.get("activeAttempt"),
+                    caption_texts[doc_id], local_video_paths[position], temp_dir, doc_id,
+                )
+        if voice:
+            for position, (_, doc_id, data) in enumerate(scenes_list):
+                local_video_paths[position] = revoiced_scene(
+                    uid, project_id, doc_id, data.get("activeAttempt"), local_video_paths[position], voice["id"], temp_dir
+                )
+        exact_timing = bool(captions) and any(caption_texts[doc_id].strip() for _, doc_id, _ in scenes_list) and all(
+            caption_words[position] for position, (_, doc_id, _) in enumerate(scenes_list) if caption_texts[doc_id].strip()
+        )
+
         stitch_videos(
             local_video_paths,
             final_video_local,
@@ -962,6 +989,7 @@ def _run_stitch_job_sync(
             caption_style=captions,
             tight_cuts=tight_cuts,
             end_card=end_card,
+            caption_words=caption_words,
         )
 
         # 3. Every stitch is a new version, so earlier final videos stay available.
@@ -997,7 +1025,10 @@ def _run_stitch_job_sync(
             # Same for the captions and the tightened cuts.
             "captions": captions or "none",
             "captionTexts": caption_texts if captions else {},
+            "captionTiming": ("exact" if exact_timing else "estimated") if captions else None,
             "tightCuts": tight_cuts,
+            # The one voice this version was re-voiced to (None = each scene's own voice).
+            "voice": voice,
             "endCard": {
                 "imageRef": card["imageRef"],
                 "headline": end_card["headline"],

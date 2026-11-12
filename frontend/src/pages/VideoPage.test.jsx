@@ -8,6 +8,8 @@ import { stitchVideos } from '../services/api';
 
 // The page reads the project and its scenes through these hooks; each test sets what they return.
 const data = { project: null, scenes: [] };
+// What the voice service offers; a test replaces the fields it needs.
+const voiceList = { available: false, voices: [], loading: false, error: '' };
 vi.mock('../hooks/useProject', () => ({
   useProject: () => ({ project: data.project, loading: false }),
   useScenes: () => ({ scenes: data.scenes, loading: false }),
@@ -16,6 +18,7 @@ vi.mock('../hooks/useProject', () => ({
 }));
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'u1' } }) }));
 vi.mock('../hooks/useModels', () => ({ useModels: () => ({ musicModels: [], defaultMusicModel: '' }) }));
+vi.mock('../hooks/useVoices', () => ({ useVoices: () => voiceList }));
 vi.mock('../hooks/useDoneNotifications', () => ({ useDoneNotifications: () => {} }));
 vi.mock('../utils/notify', () => ({ askToNotify: vi.fn(), notifyDone: vi.fn() }));
 vi.mock('../services/api', () => ({
@@ -148,5 +151,29 @@ describe('Video step: nothing to show', () => {
     expect(screen.getByRole('heading', { name: 'No scenes yet' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Go to Script' })).toBeTruthy();
     expect(bar).toBeNull();
+  });
+});
+
+describe('Video step: one voice', () => {
+  const stitched = { finalVideos: [version(1, { voice: null })], finalVideoVersion: 1, status: 'completed' };
+
+  it('does not show the voice choice without a voice service', () => {
+    Object.assign(voiceList, { available: false, voices: [] });
+    open();
+    expect(screen.queryByRole('heading', { name: 'Voice' })).toBeNull();
+  });
+
+  it('offers it next to captions and music when the service is set up', () => {
+    Object.assign(voiceList, { available: true, voices: [{ id: 'v1', name: 'Rachel', description: '', previewUrl: '' }] });
+    open();
+    expect(screen.getByRole('heading', { name: 'Voice' })).toBeTruthy();
+    expect(screen.getByLabelText('Voice for the whole video').value).toBe('');
+    Object.assign(voiceList, { available: false, voices: [] });
+  });
+
+  it('asks for a new stitch after a voice was picked', () => {
+    const bar = open({ project: { ...stitched, settings: { voice: { id: 'v1', name: 'Rachel' } } } });
+    expect(bar.getByText('The voice changed since this version was stitched.')).toBeTruthy();
+    expect(bar.getByRole('button', { name: 'Stitch new version' }).disabled).toBe(false);
   });
 });

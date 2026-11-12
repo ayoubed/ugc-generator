@@ -331,3 +331,23 @@ export function analyseReference(projectId, storageRef, name = '') {
 export function deleteProjectEverywhere(projectId) {
   return callApi(`/api/projects/${projectId}`, { method: 'DELETE', fallback: 'Could not delete the project' });
 }
+
+/**
+ * Calls GET /api/voices: { available, voices: [{ id, name, description, previewUrl }] }.
+ * `available` is false when the server has no voice service set up.
+ */
+export async function fetchVoices() {
+  const authHeaders = await getAuthHeaders();
+  const response = await fetch('/api/voices', { headers: authHeaders });
+  if (!response.ok) {
+    let errorMsg = `Could not load the voices: ${response.statusText}`;
+    try {
+      const errorData = await response.json();
+      errorMsg = errorData.detail || errorData.message || errorMsg;
+    } catch {
+      // ignore
+    }
+    throw new Error(errorMsg);
+  }
+  return response.json();
+}

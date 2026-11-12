@@ -57,6 +57,20 @@ both suites, lint and the build on every push to `main` and on pull requests.
 app calls `GET /api/me`: an account on the list gets an `allowed` mark on its sign-in token, which
 the database and file rules require; any other account sees a no-access screen.
 
+## One voice and exact captions (ElevenLabs, optional)
+
+Set `ELEVENLABS_API_KEY` on the backend (in `backend/.env` locally, as an environment variable on
+Cloud Run) to switch on two things at stitch time:
+
+- **One voice for the whole video.** The Video step gets a Voice card. With a voice picked, every
+  scene's speech is re-voiced to it (voice changer). The re-voiced audio is kept next to the take,
+  so stitching again does not pay for it again.
+- **Exact caption timing.** Each caption word is placed where it is spoken (forced alignment)
+  instead of being estimated. The word times are kept on the scene.
+
+Without the key the app behaves as before: no Voice card, estimated caption timing. Code:
+`backend/app/elevenlabs.py` (the client) and `backend/app/voiceover.py` (what the stitch does).
+
 ## Deploy
 
 Order matters when a change touches more than one part: backend first, then frontend, then rules.

@@ -9,6 +9,7 @@ import CaptionPreview from '../components/CaptionPreview';
 import TakesUsed from '../components/TakesUsed';
 import FinishCard from '../components/FinishCard';
 import MusicCard from '../components/MusicCard';
+import VoiceCard from '../components/VoiceCard';
 import EndCardCard from '../components/EndCardCard';
 import SaveIndicator from '../components/SaveIndicator';
 import { useAuth } from '../hooks/useAuth';
@@ -535,6 +536,7 @@ function ProjectVideo({ projectId: id }) {
                   )}
                 </FinishCard>
 
+                <VoiceCard project={project} disabled={stitching} />
                 <MusicCard project={project} now={now} disabled={stitching} />
                 <EndCardCard
                   project={project}
