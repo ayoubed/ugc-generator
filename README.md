@@ -11,7 +11,6 @@ and an optional end card. Live at https://app.eleviat.com.
 | `backend/` | FastAPI service (`app/`), deployed to Cloud Run as `ugc-api`. Tests in `tests/`. |
 | `frontend/` | React + Vite app, deployed to Firebase Hosting (site `flowmint-94e87`). |
 | `firestore.rules`, `storage.rules` | Security rules. They also carry the Eleviat landing page's form rule, because deploying replaces the whole ruleset. |
-| `app.py`, `video_pipeline.py`, root `Dockerfile` | The earlier Streamlit version. Not used by the live app. |
 
 ## Run it locally
 
