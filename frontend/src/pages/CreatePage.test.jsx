@@ -280,3 +280,26 @@ describe('Idea step: layout', () => {
     }
   });
 });
+
+describe('Idea step: the reference video comes first', () => {
+  it('shows the shortcut above the idea', async () => {
+    open();
+    await formLoaded();
+    const pitch = screen.getByRole('heading', { name: 'Start from an ad that already works' });
+    const idea = screen.getByRole('textbox', { name: 'Your idea' });
+    expect(pitch.compareDocumentPosition(idea) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('lists what the video filled in, and points the idea at it', async () => {
+    const breakdown = { ...BREAKDOWN, summary: 'A creator shows a mug.' };
+    open({ project: { referenceStatus: 'ready', settings: {
+      numScenes: 2, duration: 6, wordsPerScene: 15, cameraTags: ['Phone front camera'], assetBible: DETAILS,
+      reference: { storageRef: 'ref.mp4', url: '', name: 'ref.mp4', breakdown, use: true },
+    } } });
+    await formLoaded();
+    const filled = within(screen.getByRole('list', { name: 'Filled in from the video' }));
+    await waitFor(() => expect(filled.getAllByRole('listitem').map((li) => li.textContent))
+      .toEqual(['2 scenes', '6 seconds each', '15 words per scene', '1 style detail']));
+    expect(screen.getByText(/The reference: A creator shows a mug\. Describe your own product the same way\./)).toBeTruthy();
+  });
+});

@@ -53,8 +53,6 @@ function BreakdownEditor({ projectId, breakdown, disabled, onChange, onError }) 
 
   return (
     <div className="ref-breakdown">
-      {value.summary && <p className="ref-summary">{value.summary}</p>}
-
       <label className="label" htmlFor={`${baseId}-hook`}>
         Hook{value.hook_type && value.hook_type !== 'Other' ? ` (${value.hook_type})` : ''}
       </label>
@@ -160,31 +158,41 @@ function BreakdownEditor({ projectId, breakdown, disabled, onChange, onError }) 
   );
 }
 
+const STEPS = [
+  { title: 'Upload their ad', text: 'A competitor’s video, or any ad you want to match.' },
+  { title: 'See why it works', text: 'Its hook, parts, pacing and style, laid out for you.' },
+  { title: 'Get your version', text: 'Your script follows the same structure, in your words.' },
+];
+
 /**
- * Idea page: start from a video that works, e.g. a competitor's ad. The video is uploaded, broken
- * down into its structure (hook, parts, pacing, music, call to action) and shown next to the
- * breakdown so it can be corrected. "Use this structure" fills in the form and makes the script
- * follow the parts. Only the structure is reused: their words and frames never are.
+ * Idea page, at the top: start from a video that works, e.g. a competitor's ad. The video is
+ * uploaded and broken down into its structure (hook, parts, pacing, music, call to action). When the
+ * breakdown arrives while the page is open it fills in the form by itself and the script follows
+ * its parts; the breakdown stays editable under "Review the breakdown". Only the structure is
+ * reused: their words and frames never are.
  *
  * @param {object}   project
  * @param {string}   storagePrefix     users/{uid}/projects/{pid}
- * @param {function} onApply           (breakdown) => void. Fills in the Idea form.
+ * @param {function} onApply           () => void. Fills in the Idea form from the breakdown.
  * @param {function} onBreakdownChange (breakdown) => void. Called on every edit.
+ * @param {string[]} filled            What the form currently holds from the video, e.g. ["5 scenes"].
  * @param {boolean}  disabled
  */
-export default function ReferenceVideoCard({ project, storagePrefix = '', onApply, onBreakdownChange, disabled = false }) {
+export default function ReferenceVideoCard({ project, storagePrefix = '', onApply, onBreakdownChange, filled = [], disabled = false }) {
   const baseId = useId();
   const fileInput = useRef(null);
   const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [error, setError] = useState('');
   const [now, setNow] = useState(() => Date.now());
 
   const reference = project?.settings?.reference || null;
+  const hasVideo = Boolean(reference?.storageRef);
   const breakdown = reference?.breakdown?.scenes?.length ? reference.breakdown : null;
   const startedAt = toMillis(project?.referenceStartedAt) || now;
-  const analysing = Boolean(reference?.storageRef) && !breakdown
+  const analysing = hasVideo && !breakdown
     && project?.referenceStatus === 'analysing' && now - startedAt < STALE_MS;
-  const failed = Boolean(reference?.storageRef) && !breakdown && !analysing && !uploading;
+  const failed = hasVideo && !breakdown && !analysing && !uploading;
   const inUse = Boolean(breakdown && reference.use);
 
   // While the video is being watched, re-check now and then so a stuck analysis is noticed.
@@ -204,6 +212,31 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
     }
   };
 
+  const follow = async () => {
+    // The editor reports every edit to the parent, which applies its latest copy.
+    onApply?.();
+    await save({ 'reference.use': true });
+  };
+
+  // A breakdown that arrives while this page is waiting for it is put to use straight away: the
+  // form is filled in and the script follows it. One that was already there when the page opened
+  // is left alone, so "Stop following it" stays stopped.
+  const waiting = useRef(false);
+  const followRef = useRef(follow);
+  useEffect(() => {
+    followRef.current = follow;
+  });
+  useEffect(() => {
+    if (uploading || analysing) {
+      waiting.current = true;
+      return;
+    }
+    if (!waiting.current) return;
+    waiting.current = false;
+    if (breakdown && !reference.use) followRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploading, analysing, Boolean(breakdown)]);
+
   const analyse = async (storageRef, name) => {
     setError('');
     try {
@@ -215,9 +248,7 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
     }
   };
 
-  const handleFile = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
+  const upload = async (file) => {
     if (!file) return;
     if (!EXTENSIONS[file.type]) {
       setError('Use an MP4, MOV or WebM video.');
@@ -252,6 +283,12 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
     }
   };
 
+  const handleFile = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    upload(file);
+  };
+
   const remove = () => {
     if (!window.confirm('Remove the reference video and its breakdown? Your idea, settings and script stay as they are.')) return;
     onBreakdownChange?.(null);
@@ -259,32 +296,54 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
   };
 
   const locked = disabled || uploading;
+  const dropProps = locked ? {} : {
+    onDragOver: (event) => {
+      event.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (event) => {
+      event.preventDefault();
+      setDragging(false);
+      upload(event.dataTransfer?.files?.[0]);
+    },
+  };
 
   return (
-    <section className="card card-white asset-card" aria-labelledby={`${baseId}-title`}>
-      <div className="asset-head">
-        <div>
-          <h3 className="asset-title" id={`${baseId}-title`}>
-            Start from a video that works
-            <span className="asset-optional">(optional)</span>
-          </h3>
-          <p className="asset-sub">
-            Upload an ad you want to match, for example a competitor&apos;s. The app breaks down its hook, parts and
-            pacing, and writes your script with the same structure. Their words and footage are never reused.
-          </p>
-        </div>
-      </div>
-
-      {!reference?.storageRef && (
-        <div className="start-preview start-preview-empty">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInput.current?.click()} disabled={locked}>
-            {uploading ? <LoadingSpinner size="sm" label="Uploading…" /> : 'Upload a video'}
-          </button>
-          <p className="start-preview-text">MP4, MOV or WebM, up to 50 MB. Short ads work best (under a minute).</p>
-        </div>
+    <section
+      className={`card ref-hero ${hasVideo ? 'has-video' : ''} ${dragging ? 'is-dragging' : ''}`}
+      aria-labelledby={`${baseId}-title`}
+      {...(hasVideo ? {} : dropProps)}
+    >
+      {!hasVideo && (
+        <>
+          <div className="ref-hero-pitch">
+            <p className="ref-hero-eyebrow">Optional shortcut</p>
+            <h2 className="ref-hero-title" id={`${baseId}-title`}>Start from an ad that already works</h2>
+            <p className="ref-hero-sub">
+              Upload a competitor&apos;s video and get your own version of it. Only the structure is reused: their
+              words and footage never are.
+            </p>
+            <div className="ref-hero-cta">
+              <button type="button" id="reference-upload" className="btn btn-primary" onClick={() => fileInput.current?.click()} disabled={locked}>
+                {uploading ? <LoadingSpinner size="sm" label="Uploading…" /> : 'Upload a video'}
+              </button>
+              <p className="ref-hero-hint">or drop it here · MP4, MOV or WebM, up to 50 MB · under a minute works best</p>
+            </div>
+          </div>
+          <ol className="ref-hero-steps" aria-label="How it works">
+            {STEPS.map((step, index) => (
+              <li key={step.title} className="ref-hero-step">
+                <span className="ref-hero-step-number" aria-hidden="true">{index + 1}</span>
+                <span className="ref-hero-step-title">{step.title}</span>
+                <span className="ref-hero-step-text">{step.text}</span>
+              </li>
+            ))}
+          </ol>
+        </>
       )}
 
-      {reference?.storageRef && (
+      {hasVideo && (
         <div className="ref-layout">
           <div className="ref-video">
             {reference.url && <video src={reference.url} controls playsInline preload="metadata" aria-label="Reference video" />}
@@ -299,10 +358,23 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
           </div>
 
           <div className="ref-main">
+            <div>
+              <p className="ref-hero-eyebrow">Reference video</p>
+              <h2 className="ref-hero-title is-small" id={`${baseId}-title`}>
+                {inUse
+                  ? `Your script follows this video’s ${breakdown.scenes.length} parts`
+                  : breakdown ? 'The breakdown is ready' : analysing ? 'Watching the video' : 'Start from an ad that already works'}
+              </h2>
+              {breakdown?.summary && <p className="ref-summary">{breakdown.summary}</p>}
+            </div>
+
             {analysing && (
               <div className="music-status" role="status">
                 <LoadingSpinner size="sm" />
-                <span>Watching the video… This takes about a minute. You can keep filling in the page.</span>
+                <span>
+                  This takes about a minute. The scenes, hook and style below are filled in for you when it is done;
+                  meanwhile, write your idea and add your pictures.
+                </span>
               </div>
             )}
 
@@ -322,8 +394,36 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
               </div>
             )}
 
+            {breakdown && inUse && (
+              <div className="ref-filled" role="status">
+                <p className="ref-filled-label">Filled in from the video. Change anything below.</p>
+                {filled.length > 0 && (
+                  <ul className="ref-filled-list" aria-label="Filled in from the video">
+                    {filled.map((item) => <li key={item} className="ref-chip">{item}</li>)}
+                  </ul>
+                )}
+                <p className="ref-filled-todo">Still yours to add: your idea, the person and your product.</p>
+                <button type="button" className="link-button" onClick={() => save({ 'reference.use': false })} disabled={locked}>
+                  Stop following it
+                </button>
+              </div>
+            )}
+
+            {breakdown && !inUse && (
+              <div className="ref-actions">
+                <button type="button" id="reference-use" className="btn btn-primary btn-sm" disabled={locked} onClick={follow}>
+                  Use this structure
+                </button>
+                <p className="field-hint" style={{ margin: 0 }}>
+                  Fills in the scenes, hook and style below and makes the script follow these parts. You still write
+                  your own idea and add your own pictures.
+                </p>
+              </div>
+            )}
+
             {breakdown && (
-              <>
+              <details className="ref-review">
+                <summary>Review the breakdown · {breakdown.scenes.length} {breakdown.scenes.length === 1 ? 'part' : 'parts'}</summary>
                 <BreakdownEditor
                   key={reference.storageRef}
                   projectId={project.id}
@@ -332,38 +432,7 @@ export default function ReferenceVideoCard({ project, storagePrefix = '', onAppl
                   onChange={onBreakdownChange}
                   onError={setError}
                 />
-                {inUse ? (
-                  <div className="gen-note" role="status">
-                    <p style={{ marginBottom: '8px' }}>
-                      The script will follow these {breakdown.scenes.length} parts. The hook, scene length, words per scene
-                      and style were filled in from the video; change them freely.
-                    </p>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => save({ 'reference.use': false })} disabled={locked}>
-                      Stop following it
-                    </button>
-                  </div>
-                ) : (
-                  <div className="ref-actions">
-                    <button
-                      type="button"
-                      id="reference-use"
-                      className="btn btn-primary btn-sm"
-                      disabled={locked}
-                      onClick={async () => {
-                        // The editor reports every edit to the parent, which applies its latest copy.
-                        onApply?.();
-                        await save({ 'reference.use': true });
-                      }}
-                    >
-                      Use this structure
-                    </button>
-                    <p className="field-hint" style={{ margin: 0 }}>
-                      Correct anything the breakdown got wrong first. This fills in the settings below; you still write
-                      your own idea and add your own pictures.
-                    </p>
-                  </div>
-                )}
-              </>
+              </details>
             )}
           </div>
         </div>

@@ -520,6 +520,14 @@ function CreateIdea({ projectId: id }) {
   const guidelineCount = Object.values(guidelineState).reduce((sum, [tags]) => sum + tags.length, 0);
   const detailsFilled = assetBibleFilledCount(assetBible);
   const hasScript = Boolean(project && project.status && project.status !== 'draft');
+  // What the form holds from the reference video, shown on its card (the options may be folded).
+  const filledFromReference = [
+    `${numScenes} ${numScenes === 1 ? 'scene' : 'scenes'}`,
+    `${duration} seconds each`,
+    `${wordsPerScene} words per scene`,
+    hookStyle === 'Custom Hook' && customHookDesc.trim() ? 'Its kind of hook' : '',
+    guidelineCount ? `${guidelineCount} style ${guidelineCount === 1 ? 'detail' : 'details'}` : '',
+  ].filter(Boolean);
   const busy = generating || uploadingImage;
 
   return (
@@ -544,6 +552,15 @@ function CreateIdea({ projectId: id }) {
         {error && <p className="page-alert" role="alert">{error}</p>}
 
         <form className="idea-form" onSubmit={handleGenerateScenes}>
+          <ReferenceVideoCard
+            project={project}
+            storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
+            onApply={applyReference}
+            onBreakdownChange={handleBreakdownChange}
+            filled={followsReference ? filledFromReference : []}
+            disabled={generating}
+          />
+
           <div className="idea-columns">
           <div className="idea-main">
           <section className="card card-white" aria-labelledby="idea-heading">
@@ -558,6 +575,11 @@ function CreateIdea({ projectId: id }) {
                 placeholder="e.g. A student shows the app she uses to buy lecture notes from people who already took the class, filmed selfie-style in her room."
                 required
               />
+              {followsReference && savedReference?.breakdown?.summary && (
+                <p className="field-hint">
+                  The reference: {savedReference.breakdown.summary} Describe your own product the same way.
+                </p>
+              )}
             </div>
 
             <div className="idea-pictures">
@@ -672,13 +694,6 @@ function CreateIdea({ projectId: id }) {
             </p>
           </section>
 
-          <ReferenceVideoCard
-            project={project}
-            storagePrefix={user ? `users/${user.uid}/projects/${id}` : ''}
-            onApply={applyReference}
-            onBreakdownChange={handleBreakdownChange}
-            disabled={generating}
-          />
           </div>
 
           <aside className="idea-side" aria-label="Options">
