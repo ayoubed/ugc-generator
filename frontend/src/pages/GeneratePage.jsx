@@ -603,14 +603,14 @@ function GenerateVideos({ projectId: id }) {
                 <div className="gen-run" role="region" aria-label="Generate all scenes">
                   {runActive ? (
                     <>
-                      <p className="gen-run-status" aria-live="polite">
+                      <div className="gen-run-status" aria-live="polite">
                         <LoadingSpinner size="sm" />
                         {run.status === 'stitching' || stitching
                           ? 'All scenes are ready. Stitching the final video.'
                           : run.currentNumber
                             ? `Generating all scenes: ${run.retaking ? 'retaking ' : ''}scene ${run.currentNumber} now, ${missingNumbers.length + busyNumbers.length} left${run.stitch ? ', then stitching' : ''}.`
                             : 'Starting the next scene.'}
-                      </p>
+                      </div>
                       {run.status !== 'stitching' && !stitching && (
                         <button type="button" id="gen-stop-all" className="btn btn-secondary" onClick={handleStopAll} disabled={runRequesting}>
                           {runRequesting ? 'Stopping…' : 'Stop'}
@@ -706,14 +706,14 @@ function GenerateVideos({ projectId: id }) {
                   <span className="gen-footer-count">
                     {readyCount}/{sceneCount} ready
                   </span>
-                  <p
+                  <div
                     className={`gen-footer-note ${stitchTone}`}
                     role={stitchError ? 'alert' : undefined}
                     aria-live={stitchError ? undefined : 'polite'}
                   >
                     {stitching && <LoadingSpinner size="sm" />}
                     {stitchNote}
-                  </p>
+                  </div>
                 </div>
                 {primaryAction}
               </div>

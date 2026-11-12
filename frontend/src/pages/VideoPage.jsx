@@ -561,10 +561,10 @@ function ProjectVideo({ projectId: id }) {
               <div className="gen-footer-end">
                 <div className="gen-footer-status">
                   <span className="gen-footer-count">{readyCount}/{included.length} ready</span>
-                  <p className={`gen-footer-note ${tone}`} role={stitchRequestError ? 'alert' : undefined} aria-live={stitchRequestError ? undefined : 'polite'}>
+                  <div className={`gen-footer-note ${tone}`} role={stitchRequestError ? 'alert' : undefined} aria-live={stitchRequestError ? undefined : 'polite'}>
                     {stitching && <LoadingSpinner size="sm" />}
                     {note}
-                  </p>
+                  </div>
                 </div>
                 {upToDate && !stitching ? (
                   <button type="button" id="video-download-footer" className="btn btn-primary btn-lg" onClick={handleDownload} disabled={!videoUrl || downloading}>
