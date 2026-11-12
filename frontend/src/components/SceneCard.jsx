@@ -1,12 +1,10 @@
 import React, { useId, useState } from 'react';
 import VideoPreview from './VideoPreview';
 import StatusBadge from './StatusBadge';
-import StartPicturePicker from './StartPicturePicker';
 import ReferenceImageUploader from './ReferenceImageUploader';
 import { getPromptSyncState } from '../utils/scenePrompt';
 import {
   activeTakeNumber,
-  effectiveImageSource,
   isSceneBusy,
   isSceneSkipped,
   sceneHasVideo,
@@ -43,19 +41,13 @@ function joinList(items) {
  *
  * @param {object}   scene              Scene doc (with any unsaved local text edits)
  * @param {number}   sceneNumber        1-based position
- * @param {boolean}  isFirst            First scene (no previous scene to continue from)
- * @param {string}   previousLabel      e.g. "Scene 1"
- * @param {boolean}  previousHasVideo
  * @param {string}   aspectRatio        '9:16' | '16:9'
- * @param {string}   creatorImageUrl    Creator photo from Step 1
  * @param {string}   storagePrefix      users/{uid}/projects/{pid}/scenes/{sceneId}
  * @param {number}   globalPictureCount Video-wide context pictures (they count towards each scene's limit)
  * @param {string[]} changesSinceTake   What changed since the current take, e.g. ['prompt']
  * @param {string}   continuity         Note when the current take no longer matches the previous scene
  * @param {function} onTextChange       (field, value) => void
  * @param {function} onRebuildPrompt    () => void
- * @param {function} onImageSourceChange (source) => Promise|void
- * @param {function} onCustomImageChange ({ ref, url } | null) => Promise|void
  * @param {function} onSceneImagesChange (images) => Promise|void
  * @param {function} onDelete           () => Promise|void, or null when the scene can't be deleted
  * @param {function} onAddAlternative   () => Promise|void: adds another version of this scene for the same spot
@@ -65,11 +57,7 @@ function joinList(items) {
 export default function SceneCard({
   scene = {},
   sceneNumber = 1,
-  isFirst = false,
-  previousLabel = 'the previous scene',
-  previousHasVideo = false,
   aspectRatio = '9:16',
-  creatorImageUrl = '',
   storagePrefix = '',
   globalPictureCount = 0,
   pictureLimit = 6,
@@ -77,8 +65,6 @@ export default function SceneCard({
   continuity = '',
   onTextChange,
   onRebuildPrompt,
-  onImageSourceChange,
-  onCustomImageChange,
   onSceneImagesChange,
   onDelete,
   onAddAlternative,
@@ -88,7 +74,6 @@ export default function SceneCard({
   const baseId = useId();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [sourceError, setSourceError] = useState('');
 
   const { description = '', script = '', context = '', prompt = '' } = scene;
   const syncState = getPromptSyncState(scene);
@@ -108,16 +93,6 @@ export default function SceneCard({
   else if (hasVideo) badge = <StatusBadge status="completed" label={takeNumber ? `Take ${takeNumber}` : 'Has video'} />;
   else if (status === 'failed') badge = <StatusBadge status="failed" />;
   else badge = <StatusBadge status="pending" label="No video yet" />;
-
-  const handleSourceChange = async (source) => {
-    setSourceError('');
-    try {
-      await onImageSourceChange?.(source);
-    } catch (err) {
-      console.error('Could not save the starting picture choice:', err);
-      setSourceError('Could not save your choice. Try again.');
-    }
-  };
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -282,28 +257,11 @@ export default function SceneCard({
         )}
       </div>
 
-      <section className="scene-section" aria-labelledby={`${baseId}-start`}>
-        <h3 className="scene-section-title" id={`${baseId}-start`}>Starting picture</h3>
-        <StartPicturePicker
-          isFirst={isFirst}
-          previousLabel={previousLabel}
-          previousHasVideo={previousHasVideo}
-          value={effectiveImageSource(scene, isFirst)}
-          onChange={handleSourceChange}
-          creatorImageUrl={creatorImageUrl}
-          customImageUrl={scene.customStartImageUrl || ''}
-          storagePrefix={storagePrefix}
-          onCustomImageChange={onCustomImageChange}
-          disabled={busy}
-        />
-        {sourceError && <p className="start-note start-note-error" role="alert">{sourceError}</p>}
-      </section>
-
       <section className="scene-section" aria-labelledby={`${baseId}-pictures`}>
         <h3 className="scene-section-title" id={`${baseId}-pictures`}>Scene pictures</h3>
         <ReferenceImageUploader
           label="Pictures for this scene only"
-          hint="Things that appear only in this scene, like a product close-up or a new place. Say what each one is."
+          hint="Things that appear only in this scene, like a product close-up or a new place. Say what each one is. The picture the scene starts from is chosen on the Generate step, next to its takes."
           images={scenePictures}
           maxImages={Math.max(sceneSlots, scenePictures.length)}
           storagePrefix={storagePrefix ? `${storagePrefix}/context` : ''}

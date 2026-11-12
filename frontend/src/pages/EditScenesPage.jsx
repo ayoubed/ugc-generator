@@ -11,7 +11,6 @@ import VideoContextCard from '../components/VideoContextCard';
 import { useAuth } from '../hooks/useAuth';
 import { deleteScene, updateProject, updateProjectSettings, updateScene, useProject, useScenes } from '../hooks/useProject';
 import { useModels, resolveVideoModel, modelPictureLimit } from '../hooks/useModels';
-import { useStorageUrl } from '../hooks/useStorageUrl';
 import { db } from '../services/firebase';
 import { buildScenePrompt, syncPromptWithField } from '../utils/scenePrompt';
 import {
@@ -22,7 +21,6 @@ import {
   sceneChangesSinceTake,
   isSceneSkipped,
   sceneAlternatives,
-  sceneHasVideo,
   sceneLabels,
   sceneSlot,
   stepPath,
@@ -43,7 +41,6 @@ function EditScenes({ projectId: id }) {
   const { user } = useAuth();
   const { project, loading: projectLoading } = useProject(id);
   const { scenes, loading: scenesLoading } = useScenes(id);
-  const creatorImageUrl = useStorageUrl(project?.startingImageRef || '');
   const { videoModels } = useModels();
 
   // Unsaved text edits per scene, shown on top of the live Firestore scenes.
@@ -241,15 +238,6 @@ function EditScenes({ projectId: id }) {
     scheduleSave(sceneId);
   };
 
-  const handleCustomImageChange = (sceneId, image) =>
-    updateScene(
-      id,
-      sceneId,
-      image
-        ? { customStartImageRef: image.ref, customStartImageUrl: image.url, imageSource: 'uploaded' }
-        : { customStartImageRef: null, customStartImageUrl: null }
-    );
-
   const handleDelete = async (sceneId) => {
     setActionError('');
     clearTimeout(timersRef.current[sceneId]);
@@ -393,7 +381,7 @@ function EditScenes({ projectId: id }) {
           <div className="page-head-text">
             <h1 className="page-title">Review your script</h1>
             <p className="page-subtitle">
-              Fine-tune what each scene shows and says, choose the picture it starts from and add any pictures it needs.
+              Fine-tune what each scene shows and says, and add any pictures it needs.
             </p>
           </div>
           <SaveIndicator state={saveState} onRetry={flushAll} />
@@ -451,11 +439,7 @@ function EditScenes({ projectId: id }) {
                   sceneNumber={labels[idx]}
                   alternativeCount={sceneAlternatives(mergedScenes, scene).length}
                   onAddAlternative={adding ? null : () => handleAddAlternative(scene.id)}
-                  isFirst={!prev}
-                  previousLabel={prevLabel}
-                  previousHasVideo={sceneHasVideo(prevScene)}
                   aspectRatio={aspectRatio}
-                  creatorImageUrl={creatorImageUrl}
                   storagePrefix={user ? `users/${user.uid}/projects/${id}/scenes/${scene.id}` : ''}
                   globalPictureCount={globalPictureCount}
                   pictureLimit={pictureLimit}
@@ -463,8 +447,6 @@ function EditScenes({ projectId: id }) {
                   continuity={continuityNote(scene, prevScene, prevLabel)}
                   onTextChange={(field, value) => handleTextChange(scene.id, field, value)}
                   onRebuildPrompt={() => handleRebuildPrompt(scene.id)}
-                  onImageSourceChange={(source) => updateScene(id, scene.id, { imageSource: source })}
-                  onCustomImageChange={(image) => handleCustomImageChange(scene.id, image)}
                   onSceneImagesChange={(images) => updateScene(id, scene.id, { sceneImages: images })}
                   onDelete={scenes.length > 1 ? () => handleDelete(scene.id) : null}
                   autoFocus={scene.id === justAddedId}
