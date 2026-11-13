@@ -24,6 +24,7 @@ vi.mock('../utils/notify', () => ({ askToNotify: vi.fn(), notifyDone: vi.fn() })
 vi.mock('../services/api', () => ({
   stitchVideos: vi.fn(async () => ({})),
   generateMusic: vi.fn(),
+  exportPackage: vi.fn(async () => ({})),
   resolveStorageUrl: vi.fn(async (path) => `https://files.test/${path}`),
 }));
 

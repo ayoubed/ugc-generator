@@ -50,6 +50,12 @@ def test_caption_lines_sit_where_their_scene_is_on_the_timeline():
     assert len(cues) == 2
 
 
+def test_a_word_left_over_by_a_cut_joins_the_line_before():
+    words = [("Okay,", 0.1, 0.4), ("I", 0.4, 0.5), ("have", 0.5, 0.7), ("to", 0.7, 0.8), ("show", 0.8, 1.2), ("you", 1.2, 1.28)]
+    cues = caption_cues([{"at": 0.0, "start": 0.0, "end": 1.3, "text": "Okay, I have to show you this.", "words": words}])
+    assert cues == [(0.1, 1.28, "Okay, I have to show you")]
+
+
 # --- the timeline file ---------------------------------------------------------------------------
 
 def timeline(**extra):

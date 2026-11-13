@@ -13,6 +13,7 @@ from app.captions import chunk_words, fit_words_to_clip, word_timings
 
 MIN_KEPT_SECONDS = 0.3
 SRT_MAX_WORDS, SRT_MAX_CHARS = 5, 32
+MIN_CUE_SECONDS = 0.3
 
 
 def _number(value: Any) -> Optional[float]:
@@ -74,8 +75,16 @@ def caption_cues(clips: List[Dict[str, Any]]) -> List[Tuple[float, float, str]]:
         words = fit_words_to_clip(measured, clip["start"], length) if measured else []
         if not words:
             words = word_timings(text, [], length)
+        first_of_clip = len(cues)
         for line in chunk_words(words, SRT_MAX_WORDS, SRT_MAX_CHARS):
-            cues.append((round(clip["at"] + line[0][1], 3), round(clip["at"] + line[-1][2], 3), " ".join(w[0] for w in line)))
+            start, end = round(clip["at"] + line[0][1], 3), round(clip["at"] + line[-1][2], 3)
+            line_text = " ".join(w[0] for w in line)
+            if end - start < MIN_CUE_SECONDS and len(cues) > first_of_clip:
+                # Too short to read (a word left over where the scene was cut): joined to the line before.
+                before = cues[-1]
+                cues[-1] = (before[0], end, f"{before[2]} {line_text}")
+            else:
+                cues.append((start, end, line_text))
     return cues
 
 

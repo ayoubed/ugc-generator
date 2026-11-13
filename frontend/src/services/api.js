@@ -352,3 +352,11 @@ export async function fetchVoices() {
   }
   return response.json();
 }
+
+/**
+ * Build a package of the project for another editor (watch project.packageStatus; the download
+ * link lands in project.packageUrl).
+ */
+export function exportPackage(projectId) {
+  return callApi(`/api/projects/${projectId}/package`, { fallback: 'Could not start the export' });
+}

@@ -562,6 +562,14 @@ function ProjectVideo({ projectId: id }) {
               scenes={included}
               fallbackSeconds={Number(project?.settings?.duration) || 8}
               disabled={stitching}
+              // One copy of the caption texts: the same ones the "Captions and cuts" card edits.
+              captions={{
+                textOf,
+                isOwn: (scene) => hasOwnCaptionText(project, scene) || scene.id in drafts,
+                change: handleTextChange,
+                commit: saveText,
+                reset: handleUseScript,
+              }}
             />
 
             <div className="gen-footer" role="region" aria-label="Stitch the final video">

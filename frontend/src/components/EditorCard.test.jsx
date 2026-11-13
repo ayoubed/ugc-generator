@@ -4,8 +4,11 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import EditorCard from './EditorCard';
 import { updateProjectSettings } from '../hooks/useProject';
+import { exportPackage } from '../services/api';
 
 vi.mock('../hooks/useProject', () => ({ updateProjectSettings: vi.fn(async () => {}) }));
+vi.mock('../services/api', () => ({ exportPackage: vi.fn(async () => ({})) }));
+vi.mock('firebase/firestore', () => ({ deleteField: () => 'DELETE' }));
 
 // Without a measured width the timeline is drawn at 60 pixels per second.
 const PPS = 60;
@@ -31,6 +34,7 @@ describe('the timeline', () => {
     expect(track('Video track').getAllByRole('button').length).toBe(2);
     expect(track('Voice track').getAllByRole('button', { hidden: true }).length).toBe(2);
     expect(track('Captions track').getByText('Line 0.')).toBeTruthy();
+    expect(screen.getByTestId('editor-end').textContent).toBe('0:10.0');
     expect(track('Music track').getByRole('button', { name: 'Music: Calm piano, volume 40%' })).toBeTruthy();
   });
 
@@ -63,7 +67,7 @@ describe('the timeline', () => {
 
   it('shows the end card after the last scene, and counts it in the length', () => {
     show({ settings: { endCard: { enabled: true, imageRef: 'card.png', seconds: 3 } } });
-    const card = track('Video track').getByText('End card');
+    const card = track('Video track').getByRole('button', { name: 'End card, 3 seconds' });
     expect([left(card), width(card)]).toEqual([`${10 * PPS}px`, `${3 * PPS}px`]);
     expect(screen.getByText('0:00.0 / 0:13.0')).toBeTruthy();
   });
@@ -113,6 +117,11 @@ describe('trimming a clip', () => {
     fireEvent.pointerUp(handle, { pointerId: 1 });
     expect(width(clip(1).parentElement)).toBe(`${3.5 * PPS}px`);
     expect(left(clip(2).parentElement)).toBe(`${3.5 * PPS}px`);
+    // Every time on screen follows: the total, the end mark on the ruler, and the clip's own length.
+    expect(screen.getByText('0:00.0 / 0:08.5')).toBeTruthy();
+    expect(screen.getByTestId('editor-end').textContent).toBe('0:08.5');
+    expect(screen.getByTestId('editor-end').style.left).toBe(`${8.5 * PPS}px`);
+    expect(within(clip(1)).getByText('3.5s')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Scene 1' })).toBeTruthy();
     await waitFor(() => expect(saved()).toEqual(['p1', { 'edits.0': { start: 1.5, attempt: 1 } }]), { timeout: 2000 });
   });
@@ -224,13 +233,45 @@ describe('playing the cut', () => {
     expect(screen.getByText('0:08.0 / 0:08.0')).toBeTruthy();
   });
 
-  it('moves the playhead to where the ruler is clicked', () => {
+  const canvasAt = (leftEdge) => {
+    document.querySelector('.tl-canvas').getBoundingClientRect = () => ({ left: leftEdge, top: 0, width: 600, height: 200 });
+  };
+
+  it('moves the playhead to where the ruler is pressed, and follows the pointer while it is held', () => {
     show();
+    canvasAt(20);
     const ruler = screen.getByTestId('editor-ruler');
-    ruler.getBoundingClientRect = () => ({ left: 20, top: 0, width: 600, height: 26 });
-    fireEvent.click(ruler, { clientX: 20 + 7 * PPS });
+    fireEvent.pointerDown(ruler, { clientX: 20 + 7 * PPS, pointerId: 1 });
     expect(screen.getByText('0:07.0 / 0:10.0')).toBeTruthy();
     expect(preview().getAttribute('aria-label')).toBe('Preview: scene 2');
+    fireEvent.pointerMove(ruler, { clientX: 20 + 2 * PPS, pointerId: 1 });
+    expect(screen.getByText('0:02.0 / 0:10.0')).toBeTruthy();
+    expect(preview().getAttribute('aria-label')).toBe('Preview: scene 1');
+    fireEvent.pointerUp(ruler, { pointerId: 1 });
+    fireEvent.pointerMove(ruler, { clientX: 20 + 9 * PPS, pointerId: 1 });      // let go: it stays
+    expect(screen.getByText('0:02.0 / 0:10.0')).toBeTruthy();
+  });
+
+  it('lets the playhead itself be dragged, and never past the ends', () => {
+    show();
+    canvasAt(0);
+    const knob = screen.getByTestId('editor-playhead');
+    fireEvent.pointerDown(knob, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(knob, { clientX: 4.5 * PPS, pointerId: 1 });
+    expect(screen.getByText('0:04.5 / 0:10.0')).toBeTruthy();
+    expect(document.querySelector('.tl-playhead').style.left).toBe(`${4.5 * PPS}px`);
+    fireEvent.pointerMove(knob, { clientX: 99 * PPS, pointerId: 1 });
+    expect(screen.getByText('0:10.0 / 0:10.0')).toBeTruthy();
+    fireEvent.pointerMove(knob, { clientX: -500, pointerId: 1 });
+    expect(screen.getByText('0:00.0 / 0:10.0')).toBeTruthy();
+  });
+
+  it('pauses when the playhead is grabbed', async () => {
+    show();
+    canvasAt(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 60, pointerId: 1 });
+    expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy();
   });
 
   it('jumps to a clip when it is selected', async () => {
@@ -263,5 +304,111 @@ describe('the editor while a stitch runs, and when saving fails', () => {
     await userEvent.click(clip(1));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '3' } });
     expect(await screen.findByRole('alert', {}, { timeout: 2000 })).toBeTruthy();
+  });
+});
+
+describe('captions on the timeline', () => {
+  const caption = (number) => track('Captions track').getByRole('button', { name: new RegExp(`^Caption of scene ${number}:`) });
+
+  it('opens a scene\'s caption text and saves a change', async () => {
+    show();
+    await userEvent.click(caption(2));
+    expect(screen.getByRole('heading', { name: 'Caption of scene 2' })).toBeTruthy();
+    const field = screen.getByLabelText('Caption text');
+    expect(field.value).toBe('Line 1.');
+    fireEvent.change(field, { target: { value: 'One pump, every night.' } });
+    expect(track('Captions track').getByText('One pump, every night.')).toBeTruthy();
+    fireEvent.blur(field);
+    expect(saved()).toEqual(['p1', { 'captions.texts.1': 'One pump, every night.' }]);
+  });
+
+  it('can empty a caption, and go back to the script', async () => {
+    show({ settings: { captions: { texts: { 0: 'My own words.' } } } });
+    await userEvent.click(caption(1));
+    fireEvent.change(screen.getByLabelText('Caption text'), { target: { value: '' } });
+    expect(track('Captions track').getByText('No caption')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Use the script again' }));
+    expect(saved()).toEqual(['p1', { 'captions.texts.0': 'DELETE' }]);
+  });
+
+  it('uses the page\'s caption texts when the page keeps them', async () => {
+    const page = { textOf: (s) => `page text ${s.id}`, isOwn: () => true, change: vi.fn(), commit: vi.fn(), reset: vi.fn() };
+    show({ captions: page });
+    await userEvent.click(caption(1));
+    const field = screen.getByLabelText('Caption text');
+    expect(field.value).toBe('page text 0');
+    fireEvent.change(field, { target: { value: 'New' } });
+    fireEvent.blur(field);
+    await userEvent.click(screen.getByRole('button', { name: 'Use the script again' }));
+    expect(page.change).toHaveBeenCalledWith('0', 'New');
+    expect(page.commit).toHaveBeenCalledWith('0');
+    expect(page.reset).toHaveBeenCalledWith('0');
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('the end card on the timeline', () => {
+  const settings = { endCard: { enabled: true, imageRef: 'card.png', headline: 'Shop now', subline: 'Link below', seconds: 3 } };
+
+  it('opens its headline, second line and length, and saves changes', async () => {
+    show({ settings });
+    await userEvent.click(track('Video track').getByRole('button', { name: 'End card, 3 seconds' }));
+    expect(screen.getByRole('heading', { name: 'End card' })).toBeTruthy();
+    expect(screen.getByLabelText('Headline').value).toBe('Shop now');
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Get yours' } });
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'endCard.headline': 'Get yours' }]), { timeout: 2000 });
+    fireEvent.change(screen.getByLabelText('Second line'), { target: { value: '2 for 1' } });
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'endCard.subline': '2 for 1' }]), { timeout: 2000 });
+  });
+
+  it('changes its length, and the timeline grows with it', async () => {
+    show({ settings });
+    await userEvent.click(track('Video track').getByRole('button', { name: 'End card, 3 seconds' }));
+    await userEvent.selectOptions(screen.getByLabelText('Length'), '4');
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'endCard.seconds': 4 }]), { timeout: 2000 });
+  });
+
+  it('is not on the timeline when it is off', () => {
+    show({ settings: { endCard: { ...settings.endCard, enabled: false } } });
+    expect(track('Video track').queryByRole('button', { name: /End card/ })).toBeNull();
+  });
+});
+
+describe('export for another editor', () => {
+  it('asks the server for a package', async () => {
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'Export for another editor' }));
+    expect(exportPackage).toHaveBeenCalledWith('p1');
+  });
+
+  it('says it is being prepared, and cannot be asked for twice', () => {
+    show({ project: { packageStatus: 'building', packageStartedAt: Date.now() } });
+    expect(screen.getByText(/Preparing the package: the clips, the music, a timeline file and the captions/)).toBeTruthy();
+    expect(document.getElementById('editor-export').disabled).toBe(true);
+  });
+
+  it('gives the download once it is ready', () => {
+    show({ project: { packageStatus: 'ready', packageUrl: 'https://files.test/mug-ad.zip', packageName: 'mug-ad.zip' } });
+    const link = screen.getByRole('link', { name: 'download mug-ad.zip' });
+    expect(link.getAttribute('href')).toBe('https://files.test/mug-ad.zip');
+    expect(screen.getByText(/opens in Premiere Pro and DaVinci Resolve/)).toBeTruthy();
+  });
+
+  it('says why it failed, and lets you try again', () => {
+    show({ project: { packageStatus: 'failed', packageError: 'Every scene in the video needs a video before the project can be exported.' } });
+    expect(screen.getByText(/could not be made: Every scene in the video needs a video/)).toBeTruthy();
+    expect(document.getElementById('editor-export').disabled).toBe(false);
+  });
+
+  it('treats a package that never finished as not running', () => {
+    show({ project: { packageStatus: 'building', packageStartedAt: Date.now() - 11 * 60 * 1000 } });
+    expect(document.getElementById('editor-export').disabled).toBe(false);
+  });
+
+  it('shows a request that could not be sent', async () => {
+    exportPackage.mockRejectedValueOnce(new Error('offline'));
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'Export for another editor' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
   });
 });

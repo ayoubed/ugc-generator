@@ -1,8 +1,11 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { deleteField } from 'firebase/firestore';
+import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
+import { exportPackage } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import { MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, sceneEdit } from '../utils/edits';
-import { projectCaptionStyle, projectEndCard, projectMusic, sceneCaptionText } from '../utils/projectProgress';
+import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCard, projectMusic, sceneCaptionText, toMillis } from '../utils/projectProgress';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
 
 const SAVE_DELAY_MS = 500;
@@ -16,15 +19,20 @@ const SAVE_DELAY_MS = 500;
  * of the panel that opens when it is selected (the same thing, for the keyboard). The panel also
  * holds the scene's voice volume and mute; selecting the music bar shows its volume.
  *
- * Captions are shown for orientation only (they are edited under "Captions and cuts"), and the
- * chosen voice is applied by the stitch, so the preview has each scene's own voice.
+ * A caption block opens that scene's caption text, and the end card block its headline, second
+ * line and length. The chosen voice is applied by the stitch, so the preview has each scene's own
+ * voice. "Export for another editor" builds a package other editors can open.
  *
  * @param {object}  project
  * @param {Array}   scenes   [{ scene, label }] in video order, skipped scenes left out
  * @param {number}  fallbackSeconds  scene length to assume until a clip's real length is known
  * @param {boolean} disabled
+ * @param {object}  captions  optional: { textOf(scene), isOwn(scene), change(id, text), commit(id), reset(id) }
+ *                            when the page keeps the caption texts itself; otherwise they are saved here
  */
-export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false }) {
+const STALE_PACKAGE_MS = 10 * 60 * 1000; // same limit the API uses
+
+export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false, captions = null }) {
   const baseId = useId();
   const video = useRef(null);
   const audio = useRef(null);
@@ -35,7 +43,12 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const [durations, setDurations] = useState({});
   const [drafts, setDrafts] = useState({});      // edits changed here and not yet back from the server
   const [musicDraft, setMusicDraft] = useState(null);
-  const [selected, setSelected] = useState(null); // { type: 'clip', id } | { type: 'music' } | null
+  const [captionDrafts, setCaptionDrafts] = useState({});
+  const [cardDraft, setCardDraft] = useState({});
+  const [exporting, setExporting] = useState(false);
+  const scrubbing = useRef(false);
+  const canvas = useRef(null);
+  const [selected, setSelected] = useState(null); // { type: 'clip' | 'caption', id } | { type: 'music' | 'card' } | null
   const [time, setTime] = useState(0);            // the playhead, in seconds of the timeline
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(null);       // pixels per second chosen with the zoom; null = fit the width
@@ -106,6 +119,49 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const changeMusicVolume = (percent) => {
     setMusicDraft(percent);
     saveSoon('music.volume', percent);
+  };
+
+  // Caption texts: kept by the page when it passes `captions`, otherwise saved from here.
+  const captionOf = (scene) => (captions ? captions.textOf(scene) : captionDrafts[scene.id] ?? sceneCaptionText(project, scene));
+  const captionIsOwn = (scene) => (captions ? captions.isOwn(scene) : scene.id in captionDrafts || hasOwnCaptionText(project, scene));
+  const changeCaption = (scene, text) => {
+    if (captions) return captions.change(scene.id, text);
+    setCaptionDrafts((prev) => ({ ...prev, [scene.id]: text }));
+    return saveSoon(`captions.texts.${scene.id}`, text);
+  };
+  const resetCaption = (scene) => {
+    if (captions) return captions.reset(scene.id);
+    setCaptionDrafts((prev) => {
+      const next = { ...prev };
+      delete next[scene.id];
+      return next;
+    });
+    pending.current[`captions.texts.${scene.id}`] = deleteField();
+    return flush(`captions.texts.${scene.id}`);
+  };
+
+  const cardValue = (field) => cardDraft[field] ?? endCard[field];
+  const changeCard = (field, value) => {
+    setCardDraft((prev) => ({ ...prev, [field]: value }));
+    saveSoon(`endCard.${field}`, value);
+  };
+
+  // The package for another editor is built on the server; the project says when it is ready.
+  const packageBuilding = project?.packageStatus === 'building'
+    && Date.now() - (toMillis(project?.packageStartedAt) || Date.now()) < STALE_PACKAGE_MS;
+  const handleExport = async () => {
+    setError('');
+    setExporting(true);
+    try {
+      // Edits still waiting for their timer go first, so the package has them.
+      Object.keys(pending.current).forEach(flush);
+      await exportPackage(project.id);
+    } catch (err) {
+      console.error('Could not start the export:', err);
+      setError(friendlyError(err));
+    } finally {
+      setExporting(false);
+    }
   };
 
   // ── Playback ────────────────────────────────────────────────────────────────────────────────
@@ -216,10 +272,30 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     setSelected({ type: 'clip', id: clip.id });
     if (!playing) goTo(clip.at);
   };
-  const seekFromRuler = (event) => {
-    const box = event.currentTarget.getBoundingClientRect();
-    goTo((event.clientX - box.left) / pps);
+  // Moving the playhead: press on the ruler (or on the playhead's knob) and drag.
+  const scrubTo = (event) => {
+    const box = canvas.current?.getBoundingClientRect();
+    if (box && Number.isFinite(event.clientX)) goTo((event.clientX - box.left) / pps);
   };
+  const startScrub = (event) => {
+    event.preventDefault();
+    scrubbing.current = true;
+    stop();
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // without capture the playhead still follows while the pointer is over the ruler
+    }
+    scrubTo(event);
+  };
+  const scrubHandlers = {
+    onPointerDown: startScrub,
+    onPointerMove: (event) => { if (scrubbing.current) scrubTo(event); },
+    onPointerUp: () => { scrubbing.current = false; },
+    onPointerCancel: () => { scrubbing.current = false; },
+  };
+  const captionScene = selected?.type === 'caption' ? ready.find(({ scene }) => scene.id === selected.id) : null;
+  const cardOn = endCard.enabled && Boolean(endCard.imageRef);
 
   return (
     <section className="card card-white editor-card" aria-labelledby={`${baseId}-title`}>
@@ -232,6 +308,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
           <span className="editor-clock" aria-live="off">
             {clock(time, true)} / {clock(timeline.total, true)}
           </span>
+          <button type="button" id="editor-export" className="btn btn-secondary btn-sm" onClick={handleExport} disabled={disabled || exporting || packageBuilding}>
+            {exporting || packageBuilding ? <LoadingSpinner size="sm" label="Preparing…" /> : 'Export for another editor'}
+          </button>
           <div className="editor-zoom" role="group" aria-label="Zoom">
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setScale(zoomScale(pps, -1))} aria-label="Zoom out">−</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setScale(null)}>Fit</button>
@@ -239,6 +318,19 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
           </div>
         </div>
       </div>
+
+      {(packageBuilding || project?.packageStatus === 'ready' || project?.packageStatus === 'failed') && (
+        <p className={`gen-note ${project.packageStatus === 'failed' ? 'is-error' : ''}`} role="status">
+          {packageBuilding && 'Preparing the package: the clips, the music, a timeline file and the captions. This takes a moment.'}
+          {!packageBuilding && project.packageStatus === 'ready' && project.packageUrl && (
+            <>
+              The package is ready: <a href={project.packageUrl} download={project.packageName || 'project.zip'}>download {project.packageName || 'the package'}</a>.
+              {' '}It opens in Premiere Pro and DaVinci Resolve (see the README inside). Export again after you change the cut.
+            </>
+          )}
+          {!packageBuilding && project.packageStatus === 'failed' && `The package could not be made: ${project.packageError || 'try again.'}`}
+        </p>
+      )}
 
       <div className="editor-stage">
         <div className="editor-preview">
@@ -319,10 +411,55 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               </label>
             </>
           )}
-          {!chosen && !(selected?.type === 'music' && music) && (
+          {captionScene && (
+            <>
+              <div className="editor-inspector-head">
+                <h3 className="editor-inspector-title">Caption of scene {captionScene.label}</h3>
+                {captionIsOwn(captionScene.scene) && (
+                  <button type="button" className="link-button" onClick={() => resetCaption(captionScene.scene)} disabled={disabled}>
+                    Use the script again
+                  </button>
+                )}
+              </div>
+              <label className="visually-hidden" htmlFor={`${baseId}-caption`}>Caption text</label>
+              <textarea
+                id={`${baseId}-caption`} className="textarea" rows={2} value={captionOf(captionScene.scene)} disabled={disabled}
+                placeholder="No caption on this scene"
+                onChange={(e) => changeCaption(captionScene.scene, e.target.value)}
+                onBlur={() => (captions ? captions.commit(captionScene.scene.id) : flush(`captions.texts.${captionScene.scene.id}`))}
+              />
+              <p className="field-hint">Shown word by word while the scene plays. Leave it empty for no caption on this scene.</p>
+            </>
+          )}
+          {selected?.type === 'card' && cardOn && (
+            <>
+              <h3 className="editor-inspector-title">End card</h3>
+              <div className="editor-card-fields">
+                <label htmlFor={`${baseId}-card-headline`}>Headline</label>
+                <input
+                  id={`${baseId}-card-headline`} className="input" type="text" maxLength={80} value={cardValue('headline')} disabled={disabled}
+                  onChange={(e) => changeCard('headline', e.target.value)}
+                />
+                <label htmlFor={`${baseId}-card-subline`}>Second line</label>
+                <input
+                  id={`${baseId}-card-subline`} className="input" type="text" maxLength={120} value={cardValue('subline')} disabled={disabled}
+                  onChange={(e) => changeCard('subline', e.target.value)}
+                />
+                <label htmlFor={`${baseId}-card-seconds`}>Length</label>
+                <select
+                  id={`${baseId}-card-seconds`} className="select" value={cardValue('seconds')} disabled={disabled}
+                  onChange={(e) => changeCard('seconds', Number(e.target.value))}
+                >
+                  {END_CARD_SECONDS.map((seconds) => <option key={seconds} value={seconds}>{seconds} seconds</option>)}
+                </select>
+              </div>
+              <p className="field-hint">Change its picture, or switch it off, under “End card” above.</p>
+            </>
+          )}
+          {!chosen && !captionScene && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
             <p className="field-hint">
-              Select a clip to trim it or change its volume. Drag a clip&apos;s edges to cut its start or end.
-              Click the ruler to move the playhead.
+              Select a clip to trim it or change its volume, a caption to change its text, or the music for its volume.
+              Drag a clip&apos;s edges to cut its start or end, and drag on the ruler to move the playhead.
             </p>
           )}
         </div>
@@ -338,13 +475,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
         </div>
 
         <div className="tl-scroll" ref={scroller}>
-          <div className="tl-canvas" style={{ width: `${width}px` }}>
+          <div className="tl-canvas" ref={canvas} style={{ width: `${width}px` }}>
             {/* The ruler has no keyboard role: the playhead also follows the selected clip. */}
-            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-            <div className="tl-ruler" data-testid="editor-ruler" onClick={seekFromRuler}>
+            <div className="tl-ruler" data-testid="editor-ruler" {...scrubHandlers}>
               {rulerMarks(timeline.total, pps).map((mark) => (
                 <span key={mark.time} className="tl-mark" style={{ left: `${mark.time * pps}px` }}>{mark.label}</span>
               ))}
+              {/* Where the video ends, so a trim is seen on the ruler too. */}
+              <span className="tl-end" data-testid="editor-end" style={{ left: `${timeline.total * pps}px` }}>
+                {clock(timeline.total, true)}
+              </span>
             </div>
 
             <div className="tl-track is-video" role="group" aria-label="Video track">
@@ -386,9 +526,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                 </div>
               ))}
               {timeline.total > timeline.clipsEnd && (
-                <div className="tl-block is-card" style={{ left: `${timeline.clipsEnd * pps}px`, width: `${(timeline.total - timeline.clipsEnd) * pps}px` }}>
-                  End card
-                </div>
+                <button
+                  type="button"
+                  className={`tl-block is-card ${selected?.type === 'card' ? 'is-selected' : ''}`}
+                  style={{ left: `${timeline.clipsEnd * pps}px`, width: `${(timeline.total - timeline.clipsEnd) * pps}px` }}
+                  aria-pressed={selected?.type === 'card'}
+                  aria-label={`End card, ${endCard.seconds} seconds`}
+                  onClick={() => setSelected({ type: 'card' })}
+                >
+                  <span className="tl-block-text">End card</span>
+                </button>
               )}
             </div>
 
@@ -414,14 +561,20 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             {captionStyle !== 'none' && (
               <div className="tl-track" role="group" aria-label="Captions track">
                 {timeline.clips.map((clip) => {
-                  const text = sceneCaptionText(project, clip.scene).trim();
+                  const text = captionOf(clip.scene).trim();
+                  const isSelected = selected?.type === 'caption' && selected.id === clip.id;
                   return (
-                    <div
-                      key={clip.id} className={`tl-block is-caption ${text ? '' : 'is-empty'}`} title={text || 'No caption on this scene'}
+                    <button
+                      key={clip.id} type="button"
+                      className={`tl-block is-caption ${text ? '' : 'is-empty'} ${isSelected ? 'is-selected' : ''}`}
+                      title={text || 'No caption on this scene'}
                       style={{ left: `${clip.at * pps}px`, width: `${clip.length * pps}px` }}
+                      aria-pressed={isSelected}
+                      aria-label={`Caption of scene ${clip.label}: ${text || 'none'}`}
+                      onClick={() => setSelected({ type: 'caption', id: clip.id })}
                     >
                       <span className="tl-block-text">{text || 'No caption'}</span>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -446,13 +599,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               )}
             </div>
 
-            <div className="tl-playhead" style={{ left: `${Math.min(time, timeline.total) * pps}px` }} aria-hidden="true" />
+            <div className="tl-playhead" style={{ left: `${Math.min(time, timeline.total) * pps}px` }} aria-hidden="true">
+              <span className="tl-playhead-knob" data-testid="editor-playhead" title="Drag to move the playhead" {...scrubHandlers} />
+            </div>
           </div>
         </div>
       </div>
 
       <p className="field-hint editor-foot">
-        The preview plays each scene&apos;s own voice with the music. Captions and the voice chosen under “Voice” are added when you stitch.
+        The preview plays each scene&apos;s own voice with the music. Captions and the voice chosen under “Voice” are burned in when you stitch.
       </p>
 
       <div aria-live="polite">
