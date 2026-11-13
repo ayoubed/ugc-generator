@@ -109,9 +109,9 @@ function BreakdownEditor({ projectId, breakdown, disabled, onChange, onError }) 
               onChange={(e) => setPart(index, 'happens', e.target.value)}
               onBlur={flush}
             />
-            <input
-              className="input"
-              type="text"
+            <textarea
+              className="textarea is-line"
+              rows={1}
               maxLength={400}
               aria-label={`How part ${index + 1} is filmed`}
               placeholder="How it is filmed"
@@ -125,10 +125,10 @@ function BreakdownEditor({ projectId, breakdown, disabled, onChange, onError }) 
       </ol>
 
       <label className="label" htmlFor={`${baseId}-cta`}>How it closes</label>
-      <input
+      <textarea
         id={`${baseId}-cta`}
-        className="input"
-        type="text"
+        className="textarea is-line"
+        rows={1}
         maxLength={400}
         value={value.call_to_action || ''}
         disabled={disabled}
@@ -136,10 +136,10 @@ function BreakdownEditor({ projectId, breakdown, disabled, onChange, onError }) 
         onBlur={flush}
       />
       <label className="label" htmlFor={`${baseId}-music`} style={{ marginTop: '10px' }}>Music</label>
-      <input
+      <textarea
         id={`${baseId}-music`}
-        className="input"
-        type="text"
+        className="textarea is-line"
+        rows={1}
         maxLength={400}
         placeholder="No music in the video"
         value={value.music_mood || ''}

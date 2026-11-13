@@ -218,7 +218,7 @@ export default function DashboardPage() {
               return (
                 <div
                   key={project.id}
-                  className="card card-interactive"
+                  className="card card-white card-interactive"
                   onClick={() => navigate(getRouteForProject(project))}
                   style={{
                     display: 'flex',

@@ -213,10 +213,11 @@ export default function ReferenceImageUploader({
               <label htmlFor={inputId} className="visually-hidden">
                 What is picture {i + 1}?
               </label>
-              <input
+              {/* A text area, so a long description wraps and is read in full instead of being cut off. */}
+              <textarea
                 id={inputId}
-                className={`input ref-desc ${value.trim() ? '' : 'is-empty'}`}
-                type="text"
+                className={`textarea is-line ref-desc ${value.trim() ? '' : 'is-empty'}`}
+                rows={1}
                 value={value}
                 maxLength={MAX_DESCRIPTION}
                 placeholder="What is this? e.g. The product"

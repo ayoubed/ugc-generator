@@ -40,7 +40,7 @@ export default function Layout({ children }) {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-page)' }}>
       {/* Top Navbar */}
       <header className="app-header">
         <div className="container app-header-content">
