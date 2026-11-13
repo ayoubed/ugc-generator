@@ -28,13 +28,23 @@ SCENE_AUDIO_MODES = (SCENE_AUDIO_VOICE_ONLY, SCENE_AUDIO_MODEL)
 MUSIC_INSTRUMENTAL_SUFFIX = "Instrumental only, no vocals."
 
 
-def generate_music(prompt: str, output_path: str, music_model: Optional[str] = None) -> Tuple[str, str]:
+def generate_music(
+    prompt: str, output_path: str, music_model: Optional[str] = None, seconds: Optional[float] = None
+) -> Tuple[str, str]:
     """
-    Generates a music track with Lyria. Vocals are always excluded so lyrics never clash with the
-    speaker. Returns (output_path, mime_type).
+    Generates a music track. Vocals are always excluded so lyrics never clash with the speaker.
+    `seconds` is the length of the video: ElevenLabs makes the track exactly that long, with a
+    real ending; Lyria ignores it (its track is looped or cut when stitching).
+    Returns (output_path, mime_type).
     """
     model = get_music_model(music_model)
     text = (prompt or "").strip() or "Light, upbeat instrumental background music for a casual social media video."
+    if model.get("provider") == "elevenlabs":
+        from app import elevenlabs  # imported here: elevenlabs has no need of this module
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        elevenlabs.compose_music(text, output_path, seconds or 30.0)
+        return output_path, "audio/mpeg"
     if "no vocals" not in text.lower():
         text = f"{text.rstrip('.')}. {MUSIC_INSTRUMENTAL_SUFFIX}"
 
@@ -297,6 +307,30 @@ def scene_audio_instruction(scene_audio: Optional[str]) -> str:
     return ""
 
 
+SILENT_SCENE_INSTRUCTION = (
+    "Nobody speaks in this scene: no voice, no narration, no dialogue, and nobody's lips move as if "
+    "talking. Do not repeat lines from other scenes."
+)
+
+
+def scene_speech_rule(script: Optional[str]) -> str:
+    """
+    Extra line for a scene without a script. Left alone, the video model fills the silence by
+    speaking anyway, often repeating a line it was given for the whole video.
+    """
+    return "" if (script or "").strip() else SILENT_SCENE_INSTRUCTION
+
+
+# Two things generated product shots get wrong often enough to say every time.
+REALISM_INSTRUCTION = (
+    "Keep everything at real-life size: a product that is held or worn is its true size next to the "
+    "hand, wrist and face (a wristwatch is about as wide as the wrist it is on, never larger). Every "
+    "hand and arm in frame belongs to the person in the scene and joins their body naturally, at an "
+    "angle that person could really hold: never a detached, extra or impossibly bent arm. Natural "
+    "phone-camera proportions, no fisheye or exaggerated close-up distortion."
+)
+
+
 # Left alone, Omni tends to split one generation into several shots (its docs say so). A scene here
 # is one shot; cuts happen between scenes, where the app controls them.
 SINGLE_SHOT_INSTRUCTION = "Film this as a single continuous shot from one camera position. No scene cuts."
@@ -316,7 +350,7 @@ def build_omni_generation_prompt(
     <FIRST_FRAME> / <IMAGE_REF_N> control tags.
     """
     refs = reference_descriptions or []
-    lines = [prompt.strip(), "", SINGLE_SHOT_INSTRUCTION, "", "Picture 1 is the first frame of the video."]
+    lines = [prompt.strip(), "", SINGLE_SHOT_INSTRUCTION, REALISM_INSTRUCTION, "", "Picture 1 is the first frame of the video."]
     if has_end_frame:
         lines.append("Picture 2 is the last frame of the video: the video ends on it.")
     if refs:
@@ -339,7 +373,7 @@ EXTEND_INSTRUCTION = (
 
 def build_omni_extend_prompt(prompt: str, scene_audio: Optional[str] = None) -> str:
     """Text of a request that continues the previous scene's video (see generate_scene_video)."""
-    lines = [EXTEND_INSTRUCTION, "", prompt.strip(), "", "Keep it one continuous shot. No scene cuts."]
+    lines = [EXTEND_INSTRUCTION, "", prompt.strip(), "", "Keep it one continuous shot. No scene cuts.", REALISM_INSTRUCTION]
     audio_line = scene_audio_instruction(scene_audio)
     if audio_line:
         lines += ["", audio_line]
@@ -660,7 +694,9 @@ def check_take(
          (Do NOT report differences from the script here; that is compared separately.)
        - product: a product or prop that contradicts the description (wrong colour, count, shape, label).
        - speaker: the person clearly contradicts the description, or changes during the clip.
-{take_check_photo_rule(has_photo)}       - hands_or_face: deformed, extra or merging fingers or hands; a distorted face.
+{take_check_photo_rule(has_photo)}       - hands_or_face: deformed, extra or merging fingers or hands; a distorted face; an arm that
+         could not belong to the person in frame (detached, or bent in an impossible way).
+       - scale: a product clearly too large or too small next to the hand, wrist or face holding it.
        - on_screen_text: garbled or misspelled text on a label, a screen or as an overlay.
        - cut: an abrupt jump to a different person or place.
        - audio: {"background music or a soundtrack (the clip must have the voice and room sound only)" if voice_only else "loud noise or distorted sound"}.
@@ -1098,6 +1134,52 @@ def check_clips_match(clips: List[Dict[str, Any]], labels: Optional[List[str]] =
 
 # Music volume relative to the voice (after both are leveled). The music is also ducked under speech.
 MUSIC_VOLUMES = {"low": 0.12, "medium": 0.2, "high": 0.32}
+MUSIC_VOLUME_MAX_PERCENT = 100
+
+
+def music_volume_factor(value: Any) -> float:
+    """
+    How loud the music is mixed, as a factor on its leveled signal. `value` is "low" / "medium" /
+    "high" (older projects) or a number from 0 to 100 from the volume slider, where 40 equals
+    "medium". Anything else means "medium".
+    """
+    if isinstance(value, str) and value in MUSIC_VOLUMES:
+        return MUSIC_VOLUMES[value]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return MUSIC_VOLUMES["medium"]
+    return round(max(0.0, min(float(MUSIC_VOLUME_MAX_PERCENT), float(value))) / 200.0, 4)
+
+
+# --- manual edits of a scene in the final video (the editor on the Video step) ---
+MIN_EDIT_SECONDS = 0.3
+MAX_SCENE_VOLUME = 2.0
+
+
+def apply_scene_edit(
+    duration: float, auto_start: float, auto_end: float, edit: Optional[Dict[str, Any]]
+) -> Tuple[float, float]:
+    """
+    The part of a clip that is kept. An edit's "start"/"end" (seconds in the clip) replace the
+    automatic trim; a missing or unusable one leaves that side automatic.
+    """
+    start, end = auto_start, auto_end
+    if isinstance(edit, dict):
+        s, e = _as_float(edit.get("start")), _as_float(edit.get("end"))
+        if s is not None:
+            start = max(0.0, min(duration, s))
+        if e is not None:
+            end = max(0.0, min(duration, e))
+        if end - start < MIN_EDIT_SECONDS:
+            return auto_start, auto_end
+    return start, end
+
+
+def scene_volume_db(edit: Optional[Dict[str, Any]]) -> float:
+    """Extra gain for a scene's voice from the editor's volume (1 = unchanged, 0.5 = half, 2 = double)."""
+    volume = _as_float((edit or {}).get("volume")) if isinstance(edit, dict) else None
+    if volume is None or volume <= 0:
+        return 0.0
+    return round(20.0 * math.log10(min(MAX_SCENE_VOLUME, max(0.05, volume))), 2)
 
 CUT_FADE_SECONDS = 0.03      # tiny fade at every cut, so scene audio never clicks or jumps
 SCENE_LOUDNESS_LUFS = -16.0  # every scene (and the music) is leveled to this before mixing
@@ -1212,7 +1294,7 @@ def _gain_to(target_lufs: float, stats: Optional[Dict[str, str]]) -> float:
 def build_stitch_audio_filter(
     clips: List[Dict[str, Any]],
     music_input_index: Optional[int] = None,
-    music_volume: str = "medium",
+    music_volume: Any = "medium",
     music_gain_db: float = 0.0,
     room_tone: bool = False,
     music_start: float = 0.0,
@@ -1251,7 +1333,7 @@ def build_stitch_audio_filter(
     final_in = "[voice]"
 
     if music_input_index is not None:
-        vol = MUSIC_VOLUMES.get(music_volume, MUSIC_VOLUMES["medium"])
+        vol = music_volume_factor(music_volume)
         fade_in = min(0.5, total / 4)
         fade_out = min(1.5, total / 3)
         tempo = f"atempo={music_tempo:.4f}," if abs(music_tempo - 1.0) > 1e-4 else ""
@@ -1354,18 +1436,21 @@ def stitch_videos(
     video_paths: List[str],
     output_path: str,
     music_path: Optional[str] = None,
-    music_volume: str = "medium",
+    music_volume: Any = "medium",
     labels: Optional[List[str]] = None,
     caption_texts: Optional[List[str]] = None,
     caption_style: Optional[str] = None,
     tight_cuts: bool = True,
     end_card: Optional[Dict[str, Any]] = None,
     caption_words: Optional[List[Optional[List[Tuple[str, float, float]]]]] = None,
+    edits: Optional[List[Optional[Dict[str, Any]]]] = None,
 ) -> str:
     """
     Stitches scene videos into one video. `labels` name the clips in error messages ("Scene 2").
     caption_words: optional, one entry per clip: when each caption word is spoken in the untrimmed
     clip ([(word, start, end)]), or None to estimate that clip's timing from where speech is heard.
+    edits: optional, one entry per clip, from the editor: {"start", "end"} (seconds kept, replacing
+    the automatic trim), "muted" (the scene's own sound is dropped) and "volume" (1 = unchanged).
     end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
@@ -1386,13 +1471,18 @@ def stitch_videos(
     check_clips_match(clips, labels)
 
     any_sound = False
-    for vp, clip in zip(video_paths, clips):
+    for index, (vp, clip) in enumerate(zip(video_paths, clips)):
         stats = measure_loudness(vp) if clip["has_audio"] else None
         clip["gain_db"] = _gain_to(SCENE_LOUDNESS_LUFS, stats)
         any_sound = any_sound or stats is not None
         full = max(0.05, float(clip["duration"]))
         speech = detect_speech(vp, full, _as_float((stats or {}).get("input_i"))) if stats else []
         start, end = plan_trim(full, speech, tight_cuts)
+        edit = edits[index] if edits and index < len(edits) else None
+        start, end = apply_scene_edit(full, start, end, edit)
+        clip["gain_db"] += scene_volume_db(edit)
+        if isinstance(edit, dict) and edit.get("muted"):
+            clip["has_audio"] = False   # the mix puts silence of the same length in its place
         clip["trim_start"] = start
         clip["duration"] = end - start
         # Speech as it sits in the trimmed clip (used to time the captions).

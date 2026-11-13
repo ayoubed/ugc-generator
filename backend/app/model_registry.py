@@ -50,7 +50,22 @@ MUSIC_MODELS: List[Dict[str, Any]] = [
         "description": "Full-length tracks, for videos longer than 30 seconds. Slower.",
         "clip_seconds": None,
     },
+    {
+        "id": "elevenlabs-music",
+        "label": "ElevenLabs Music",
+        "description": "Made to the exact length of your video, with a real ending.",
+        "clip_seconds": None,
+        "provider": "elevenlabs",   # offered only when ELEVENLABS_API_KEY is set
+    },
 ]
+
+
+def _offered(model: Dict[str, Any]) -> bool:
+    if model.get("provider") == "elevenlabs":
+        from app import elevenlabs
+        return elevenlabs.is_configured()
+    return True
+
 
 DEFAULT_VIDEO_MODEL_ID = VIDEO_MODELS[0]["id"]
 DEFAULT_SCRIPT_MODEL_ID = SCRIPT_MODELS[0]["id"]
@@ -82,7 +97,9 @@ def get_script_model(model_id: Optional[str]) -> Dict[str, Any]:
 
 
 def get_music_model(model_id: Optional[str]) -> Dict[str, Any]:
-    return _find(MUSIC_MODELS, model_id) or MUSIC_MODELS[0]
+    """The chosen music model, or the default when it is unknown or its service is not set up."""
+    model = _find(MUSIC_MODELS, model_id)
+    return model if model and _offered(model) else MUSIC_MODELS[0]
 
 
 def is_offered_video_model(model_id: Optional[str]) -> bool:
@@ -110,7 +127,7 @@ def models_payload() -> Dict[str, Any]:
     return {
         "video_models": VIDEO_MODELS,
         "script_models": SCRIPT_MODELS,
-        "music_models": MUSIC_MODELS,
+        "music_models": [m for m in MUSIC_MODELS if _offered(m)],
         "default_video_model": DEFAULT_VIDEO_MODEL_ID,
         "default_script_model": DEFAULT_SCRIPT_MODEL_ID,
         "default_music_model": DEFAULT_MUSIC_MODEL_ID,

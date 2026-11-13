@@ -26,6 +26,7 @@ from app.pipeline import (
     SCENE_AUDIO_MODES,
     SCENE_AUDIO_VOICE_ONLY,
     MUSIC_VOLUMES,
+    scene_speech_rule,
     ASSET_BIBLE_FIELDS,
     asset_bible_lines,
     GenerationCancelled,
@@ -268,8 +269,31 @@ def project_music(project_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     music = ((project_data or {}).get("settings") or {}).get("music")
     if not isinstance(music, dict) or music.get("source") in (None, "none") or not music.get("storageRef"):
         return None
-    volume = music.get("volume") if music.get("volume") in MUSIC_VOLUMES else "medium"
-    return {**music, "volume": volume}
+    volume = music.get("volume")
+    named = isinstance(volume, str) and volume in MUSIC_VOLUMES
+    number = isinstance(volume, (int, float)) and not isinstance(volume, bool) and 0 <= volume <= 100
+    return {**music, "volume": volume if named or number else "medium"}
+
+
+def scene_edits(project_data: Optional[Dict[str, Any]], scenes_list: List[tuple]) -> List[Optional[Dict[str, Any]]]:
+    """
+    The editor's changes for each scene of the video, in order (settings.edits.<scene id>), or None
+    where there are none. An edit belongs to the take it was made on: after another take is put in
+    use, its trim points mean nothing, so it is ignored.
+    """
+    saved = ((project_data or {}).get("settings") or {}).get("edits")
+    saved = saved if isinstance(saved, dict) else {}
+    result: List[Optional[Dict[str, Any]]] = []
+    for _, doc_id, data in scenes_list:
+        edit = saved.get(doc_id)
+        if not isinstance(edit, dict) or edit.get("attempt") != data.get("activeAttempt"):
+            result.append(None)
+            continue
+        kept = {key: edit[key] for key in ("start", "end", "volume") if isinstance(edit.get(key), (int, float)) and not isinstance(edit.get(key), bool)}
+        if edit.get("muted"):
+            kept["muted"] = True
+        result.append({"attempt": edit.get("attempt"), **kept} if kept else None)
+    return result
 
 
 def scene_slot(doc_id: Any, scene_data: Optional[Dict[str, Any]]) -> Optional[int]:
@@ -687,6 +711,9 @@ def _run_video_generation_job_sync(
             prompt = "\n".join(context_parts) + "\n\nScene Detail:\n" + base_prompt
         else:
             prompt = base_prompt
+        speech_rule = scene_speech_rule(script)
+        if speech_rule:
+            prompt += "\n\n" + speech_rule
 
         local_output_video = os.path.join(temp_dir, f"scene_{scene_index}_generated.mp4")
         scene_audio = project_scene_audio(project_data)
@@ -996,6 +1023,7 @@ def _run_stitch_job_sync(
             caption_words[position] for position, (_, doc_id, _) in enumerate(scenes_list) if caption_texts[doc_id].strip()
         )
 
+        edits = scene_edits(project_data, scenes_list)
         stitch_videos(
             local_video_paths,
             final_video_local,
@@ -1007,6 +1035,7 @@ def _run_stitch_job_sync(
             tight_cuts=tight_cuts,
             end_card=end_card,
             caption_words=caption_words,
+            edits=edits,
         )
 
         # 3. Every stitch is a new version, so earlier final videos stay available.
@@ -1046,6 +1075,8 @@ def _run_stitch_job_sync(
             "tightCuts": tight_cuts,
             # The one voice this version was re-voiced to (None = each scene's own voice).
             "voice": voice,
+            # The editor's trims, mutes and volumes this version was cut with, per scene id.
+            "edits": {doc_id: edit for (_, doc_id, _), edit in zip(scenes_list, edits) if edit},
             "endCard": {
                 "imageRef": card["imageRef"],
                 "headline": end_card["headline"],

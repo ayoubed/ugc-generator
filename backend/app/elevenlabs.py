@@ -49,6 +49,8 @@ def _message_for(status_code: int, doing: str) -> str:
         return "That voice no longer exists. Pick another voice on the Video step."
     if status_code >= 500:
         return "The voice service had a problem. Try again in a moment."
+    if doing == "Making the music":
+        return "The music service did not accept this description. Reword it and try again."
     return f"{doing} was not accepted by the voice service. Try again, or pick another voice."
 
 
@@ -113,6 +115,23 @@ def change_voice(audio_path: str, voice_id: str, output_path: str) -> str:
         )
     if not response.content:
         raise VoiceServiceError("The voice service returned no audio. Try again.")
+    with open(output_path, "wb") as out:
+        out.write(response.content)
+    return output_path
+
+
+MUSIC_MIN_SECONDS, MUSIC_MAX_SECONDS = 3.0, 600.0
+
+
+def compose_music(prompt: str, output_path: str, seconds: float) -> str:
+    """An instrumental track of exactly `seconds` (3 to 600), written as an MP3."""
+    length = int(round(max(MUSIC_MIN_SECONDS, min(MUSIC_MAX_SECONDS, float(seconds))) * 1000))
+    response = _request(
+        "POST", "/v1/music", "Making the music",
+        json={"prompt": prompt, "music_length_ms": length, "force_instrumental": True},
+    )
+    if not response.content:
+        raise VoiceServiceError("The music service returned no audio. Try a different description.")
     with open(output_path, "wb") as out:
         out.write(response.content)
     return output_path

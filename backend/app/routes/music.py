@@ -8,7 +8,7 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -34,7 +34,7 @@ _EXTENSIONS = {"audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/wav": ".wav", "
 class GenerateMusicRequest(BaseModel):
     prompt: str = Field("", max_length=1000)
     model: Optional[str] = None
-    volume: Optional[str] = None
+    volume: Optional[Union[int, float, str]] = None   # "low" / "medium" / "high" or 0 to 100
 
 
 def _is_running(project_data: Dict[str, Any]) -> bool:
@@ -46,13 +46,37 @@ def _is_running(project_data: Dict[str, Any]) -> bool:
     return (datetime.datetime.now(datetime.timezone.utc).timestamp() - started.timestamp()) < STALE_MUSIC_SECONDS
 
 
-def _run_music_job_sync(uid: str, project_id: str, prompt: str, model_id: str, volume: str, version: int) -> None:
+def clean_music_volume(value: Any, fallback: Any = "medium") -> Any:
+    """A volume the stitch understands: a named level, or a whole number from 0 to 100."""
+    for candidate in (value, fallback):
+        if isinstance(candidate, str) and candidate in MUSIC_VOLUMES:
+            return candidate
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) and 0 <= candidate <= 100:
+            return int(round(candidate))
+    return "medium"
+
+
+def estimated_video_seconds(project_data: Dict[str, Any], scene_count: int) -> float:
+    """Roughly how long the final video will be, for music made to length."""
+    settings = project_data.get("settings") or {}
+    try:
+        per_scene = float(settings.get("duration") or 8)
+    except (TypeError, ValueError):
+        per_scene = 8.0
+    card = settings.get("endCard") if isinstance(settings.get("endCard"), dict) else {}
+    card_seconds = float(card.get("seconds") or 3) if card.get("enabled") and card.get("imageRef") else 0.0
+    return max(5.0, per_scene * max(1, scene_count) + card_seconds)
+
+
+def _run_music_job_sync(
+    uid: str, project_id: str, prompt: str, model_id: str, volume: Any, version: int, seconds: Optional[float] = None
+) -> None:
     db = firestore.client()
     project_ref = db.collection("projects").document(project_id)
     temp_dir = tempfile.mkdtemp(prefix=f"ugc_music_{project_id}_")
     try:
         local_raw = os.path.join(temp_dir, "music_raw")
-        _, mime_type = generate_music(prompt, local_raw, model_id)
+        _, mime_type = generate_music(prompt, local_raw, model_id, seconds=seconds)
         ext = _EXTENSIONS.get((mime_type or "").split(";")[0].strip().lower(), ".mp3")
         local_path = local_raw + ext
         os.replace(local_raw, local_path)
@@ -121,7 +145,9 @@ async def generate_music_endpoint(
 
     model_id = get_music_model(request.model)["id"]
     current = (project_data.get("settings") or {}).get("music") or {}
-    volume = request.volume if request.volume in MUSIC_VOLUMES else (current.get("volume") if current.get("volume") in MUSIC_VOLUMES else "medium")
+    volume = clean_music_volume(request.volume, current.get("volume"))
+    included = [s for s in project_ref.collection("scenes").stream() if not (s.to_dict() or {}).get("skipped")]
+    seconds = estimated_video_seconds(project_data, len(included))
     version = int(project_data.get("musicVersion") or 0) + 1
     prompt = request.prompt.strip()
 
@@ -132,7 +158,7 @@ async def generate_music_endpoint(
         "musicPrompt": prompt,
         "updatedAt": firestore.SERVER_TIMESTAMP,
     })
-    spawn_background(run_music_job(uid=uid, project_id=pid, prompt=prompt, model_id=model_id, volume=volume, version=version))
+    spawn_background(run_music_job(uid=uid, project_id=pid, prompt=prompt, model_id=model_id, volume=volume, version=version, seconds=seconds))
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
