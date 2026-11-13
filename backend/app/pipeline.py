@@ -15,6 +15,7 @@ from google.genai import types
 import difflib
 from app.models import Scene, SceneList, AssetBible, TakeCheckResult, ReferenceBreakdown
 from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID, REFERENCE_MODEL_ID
+from app import prompts
 from app.captions import build_ass, fit_words_to_clip, word_timings
 from app.beats import music_fit_for_cuts
 
@@ -159,27 +160,14 @@ def video_type_of(value: Any) -> str:
 
 
 # Added to every scene's video prompt of a product-led video.
-PRODUCT_LED_SCENE_RULE = (
-    "This is a product-led ad: the product is the subject of every shot. No face is ever on screen: "
-    "at most hands, a wrist or a forearm using or holding the product, framed so the head is out of "
-    "the picture. The voice is a narrator who is never seen: nobody in the picture speaks, and no "
-    "lips move."
-)
+PRODUCT_LED_SCENE_RULE = prompts.text("video.product_led")
 
 
 def product_led_script_rules(video_type: Any) -> str:
     """What the script writer is told when the video is product-led ('' for a creator video)."""
     if video_type_of(video_type) != VIDEO_TYPE_PRODUCT:
         return ""
-    return """VIDEO TYPE: PRODUCT-LED, WITH A NARRATOR WHO IS NEVER SEEN.
-    - Every scene is a shot of the product: in the hand, on the wrist, on a surface, a close-up of a
-      detail, being opened, used or put down. Vary the shots from scene to scene.
-    - No face appears in any scene. People are shown only as hands, wrists or forearms, and the
-      framing keeps the head out of the picture. Never describe someone talking to the camera.
-    - The script is narration spoken over the pictures by one off-screen voice. Write it to be heard,
-      not seen: it must still make sense with no speaker on screen.
-    - The video context describes the product, the surface or place it is filmed on and the light.
-      It names no presenter."""
+    return prompts.text("script_writer.product_led")
 
 
 def product_name_rule(product_name: Optional[str]) -> str:
@@ -189,14 +177,8 @@ def product_name_rule(product_name: Optional[str]) -> str:
     """
     name = " ".join(str(product_name or "").split())
     if name:
-        return (
-            f'PRODUCT NAME: "{name}". Whenever the product or its brand is named, use exactly this name, '
-            "spelled this way. Never invent another product or brand name."
-        )
-    return (
-        "PRODUCT NAME: not given. Do not invent a product or brand name. Refer to the product by what "
-        'it is (e.g. "this watch"), and mention branding only where a picture shows it.'
-    )
+        return prompts.render("product_name.given", name=name)
+    return prompts.text("product_name.missing")
 
 
 def asset_bible_prompt(
@@ -207,58 +189,20 @@ def asset_bible_prompt(
     The instruction for writing the Asset Bible. `pictures` are the attached pictures in order:
     [{"role": "speaker" | "reference", "description": str}].
     """
-    pictures = pictures or []
-    lines = [
-        "You are preparing a multi-scene UGC video. Each scene is generated separately by a video model",
-        "that does not remember the other scenes, so anything that appears in more than one scene needs",
-        "one fixed description that is reused word for word.",
-        "",
-        f'Video idea: "{idea}"',
-        product_name_rule(product_name),
-    ]
-    if pictures:
-        lines += ["", "The attached pictures show what will really be in the video:"]
-        for number, picture in enumerate(pictures, start=1):
-            if picture.get("role") == "speaker":
-                text = "the person who speaks in the video."
-            else:
-                text = (picture.get("description") or "").strip() or "a product, prop or place shown in the video."
-            lines.append(f"- Picture {number}: {text}")
-        lines += [
-            "",
-            "The pictures are the truth. Describe the person, the products and the place exactly as the",
-            "pictures show them: never invent a hair colour, a head covering, clothing, a product colour or",
-            "a material that a picture contradicts. Where the idea and a picture disagree, the picture wins.",
-            "Use the idea only for what no picture shows.",
-        ]
-    if video_type_of(video_type) == VIDEO_TYPE_PRODUCT:
-        lines += [
-            "",
-            "This video is product-led: no face is ever shown, and a narrator who is never seen talks over",
-            "the pictures. So for `character`, describe only the hands and forearms that hold the product",
-            "(skin tone, nails, sleeve, jewellery), or leave it empty when no hands are needed. For `voice`,",
-            "describe the narrator.",
-        ]
-    lines += [
-        "",
-        "Write these descriptions:",
-        "- character: the person speaking. Apparent age, hair or head covering, build, clothing with colours,",
-        "  accessories.",
-        "- hero_props: every product or object that matters to the story. Exact count, colours, materials,",
-        '  shape, size, packaging, branding, and how items differ from each other (e.g. "3 watches: ...").',
-        "- setting: where it is filmed. Room, furniture and surfaces, notable background objects.",
-        "- voice: how the speaker sounds, so it is the same in every scene. Apparent age and gender, pitch,",
-        '  pace, energy, accent if the idea implies one, and how it is recorded (e.g. "phone microphone,',
-        '  slightly roomy"). Also the tone of delivery, as one steady mood that holds from the first',
-        '  scene to the last (e.g. "calm and warm, like telling a friend, never excited or salesy").',
-        "",
-        "Rules:",
-        "- Concrete, visual facts only. No story, no dialogue, no actions, no emotions.",
-        "- No camera, lighting or visual style: those are set separately.",
-        "- Stay faithful to the idea; where it is vague, pick specific, plausible details.",
-        "- One or two sentences per field. Leave a field empty only if it truly does not apply.",
-    ]
-    return "\n".join(lines)
+    picture_lines = []
+    for number, picture in enumerate(pictures or [], start=1):
+        if picture.get("role") == "speaker":
+            described = "the person who speaks in the video."
+        else:
+            described = (picture.get("description") or "").strip() or "a product, prop or place shown in the video."
+        picture_lines.append(f"- Picture {number}: {described}")
+    return prompts.render(
+        "asset_bible",
+        idea=idea,
+        product_name_rule=product_name_rule(product_name),
+        pictures_section=prompts.render("asset_bible.pictures", picture_lines="\n".join(picture_lines)) if picture_lines else "",
+        product_led_section=prompts.text("asset_bible.product_led") if video_type_of(video_type) == VIDEO_TYPE_PRODUCT else "",
+    )
 
 
 def extract_asset_bible(
@@ -343,17 +287,11 @@ def scene_audio_instruction(scene_audio: Optional[str]) -> str:
     scenes carry just the voice, and one music track is added over the whole video when stitching.
     """
     if (scene_audio or SCENE_AUDIO_VOICE_ONLY) == SCENE_AUDIO_VOICE_ONLY:
-        return (
-            "Audio: only the speaker's voice and natural room sound. "
-            "No background music, no soundtrack, no sound effects."
-        )
+        return prompts.text("video.audio_voice_only")
     return ""
 
 
-SILENT_SCENE_INSTRUCTION = (
-    "Nobody speaks in this scene: no voice, no narration, no dialogue, and nobody's lips move as if "
-    "talking. Do not repeat lines from other scenes."
-)
+SILENT_SCENE_INSTRUCTION = prompts.text("video.silent_scene")
 
 
 def scene_speech_rule(script: Optional[str]) -> str:
@@ -365,18 +303,12 @@ def scene_speech_rule(script: Optional[str]) -> str:
 
 
 # Two things generated product shots get wrong often enough to say every time.
-REALISM_INSTRUCTION = (
-    "Keep everything at real-life size: a product that is held or worn is its true size next to the "
-    "hand, wrist and face (a wristwatch is about as wide as the wrist it is on, never larger). Every "
-    "hand and arm in frame belongs to the person in the scene and joins their body naturally, at an "
-    "angle that person could really hold: never a detached, extra or impossibly bent arm. Natural "
-    "phone-camera proportions, no fisheye or exaggerated close-up distortion."
-)
+REALISM_INSTRUCTION = prompts.text("video.realism")
 
 
 # Left alone, Omni tends to split one generation into several shots (its docs say so). A scene here
 # is one shot; cuts happen between scenes, where the app controls them.
-SINGLE_SHOT_INSTRUCTION = "Film this as a single continuous shot from one camera position. No scene cuts."
+SINGLE_SHOT_INSTRUCTION = prompts.text("video.single_shot")
 
 
 def build_omni_generation_prompt(
@@ -408,10 +340,7 @@ def build_omni_generation_prompt(
     return "\n".join(lines)
 
 
-EXTEND_INSTRUCTION = (
-    "Continue the video from where it ends, in the same shot with no cut: same person, same voice, "
-    "same place, same light. This is what happens next."
-)
+EXTEND_INSTRUCTION = prompts.text("video.extend")
 
 
 def build_omni_extend_prompt(prompt: str, scene_audio: Optional[str] = None) -> str:
@@ -463,7 +392,7 @@ def generate_script_and_scenes(
     accent_str = _format_guideline(accent)
 
     guideline_lines = "\n".join(
-        f"    - {label}: {value}"
+        f"- {label}: {value}"
         for label, value in (
             ("Camera", camera_specifics_str),
             ("Lighting", lighting_restraints_str),
@@ -476,45 +405,23 @@ def generate_script_and_scenes(
         if value
     )
 
-    hook_frameworks = """
-    HOOK FRAMEWORKS:
-    1. The Snippet (In Media Res): Start the video halfway through the story using a shocking sentence, a highly interesting fact, or an intense emotional exclamation. Loop back or fill in gaps later.
-    2. The Question (Pain Point Focus): Immediately call out the target audience and address a highly relatable pain point they face (e.g. "Are you a X and struggling with Y?").
-    3. The On-Screen Text: Use short-to-medium text overlay on the first frame to capture attention, combined with active visuals and energetic voice-over (avoid just a talking head).
-    4. The "You-Feature" (Signature Branding): Use a signature recognizable greeting, background, or statement accessory in the intro to build brand familiarity.
-    5. The Quick Cuts (Fast-Paced Editing): Cut out all dead air. Quick jumps from clip to clip, often asking a question then jump-cutting into the answer.
-    """
-
+    hook_frameworks = prompts.text("script_writer.hook_frameworks")
     if hook_style == "Auto-Select":
-        hook_instruction = f"Evaluate the video idea, pick the single most effective hook style from the following frameworks, and strictly apply it to Scene 1:\n{hook_frameworks}"
+        hook_instruction = prompts.render("script_writer.hook_auto", hook_frameworks=hook_frameworks)
     elif hook_style == "Custom Hook":
-        hook_instruction = f"Apply this custom hook style strictly to Scene 1: {custom_hook_desc}"
+        hook_instruction = prompts.render("script_writer.hook_custom", custom_hook=custom_hook_desc)
     else:
-        hook_instruction = f"You MUST strictly apply this hook style to Scene 1:\nStyle: {hook_style}\nReference Frameworks:\n{hook_frameworks}"
+        hook_instruction = prompts.render("script_writer.hook_named", hook_style=hook_style, hook_frameworks=hook_frameworks)
 
     context_descriptions = [d.strip() for d in (context_image_descriptions or []) if d and d.strip()]
-    if context_descriptions:
-        context_lines = "\n".join(f"    - {d}" for d in context_descriptions)
-        context_pictures_section = f"""
-    CONTEXT PICTURES:
-    The user attached these reference pictures. The video model will receive them as visual references in every scene, so weave them in naturally where relevant and refer to them by what they are (never as "the picture" or "the reference"):
-{context_lines}
-    """
-    else:
-        context_pictures_section = ""
+    context_pictures_section = prompts.render(
+        "script_writer.context_pictures", context_lines="\n".join(f"- {d}" for d in context_descriptions)
+    ) if context_descriptions else ""
 
     bible_lines = asset_bible_lines(asset_bible)
-    if bible_lines:
-        bible_text = "\n".join(f"    - {line}" for line in bible_lines)
-        asset_bible_section = f"""
-    ASSET BIBLE (fixed descriptions, added word for word to every scene's video prompt):
-{bible_text}
-    Treat these as the truth for every scene. Never contradict them (no other colours, counts, clothes or rooms).
-    They are added automatically, so in the video context and the scene fields refer to these items by a short name
-    (e.g. "the watch box") instead of describing them again.
-    """
-    else:
-        asset_bible_section = ""
+    asset_bible_section = prompts.render(
+        "script_writer.asset_bible", bible_text="\n".join(f"- {line}" for line in bible_lines)
+    ) if bible_lines else ""
 
     structure_scenes = [
         sc for sc in ((structure or {}).get("scenes") or [])
@@ -529,61 +436,31 @@ def generate_script_and_scenes(
                 bits.append(f"In the reference: {str(sc['happens']).strip()}")
             if str(sc.get("framing") or "").strip():
                 bits.append(f"Filmed as: {str(sc['framing']).strip()}")
-            part_lines.append(f"    - Scene {n}. " + " | ".join(bits))
+            part_lines.append(f"- Scene {n}. " + " | ".join(bits))
         extra = []
         if str((structure or {}).get("pacing") or "").strip():
-            extra.append(f"    Rhythm: {str(structure['pacing']).strip()}")
+            extra.append(f"Rhythm: {str(structure['pacing']).strip()}")
         if str((structure or {}).get("call_to_action") or "").strip():
-            extra.append(f"    How it closes: {str(structure['call_to_action']).strip()}")
-        structure_section = f"""
-    STRUCTURE TO FOLLOW (from a reference ad for a DIFFERENT product):
-{chr(10).join(part_lines)}
-{chr(10).join(extra)}
-    Scene N of your script does the same job as scene N above, in the same order, and is filmed the
-    same way (put that in the scene's context). Copy the structure only:
-    - Write every line fresh, for the user's idea and product. Never reuse or paraphrase the
-      reference's wording, and never mention its product, brand, people or place.
-    - Replace what happens in the reference with the equivalent action for the user's product.
-    """
+            extra.append(f"How it closes: {str(structure['call_to_action']).strip()}")
+        structure_section = prompts.render(
+            "script_writer.structure", part_lines="\n".join(part_lines), extra_lines="\n".join(extra)
+        )
     else:
         structure_section = ""
 
-    prompt = f"""
-    You are a creative director for a UGC (User Generated Content) video.
-    The user wants to make a video based on this idea: "{idea}"
-    {product_name_rule(product_name)}
-    {product_led_script_rules(video_type)}
-    {context_pictures_section}
-    {asset_bible_section}
-    {structure_section}
-    HOOK REQUIREMENT:
-    {hook_instruction}
-    
-    Please break this down into exactly {num_scenes} scenes.
-    First write the video context, then for each scene provide a visual description of what happens, the spoken script, the scene's context, and a prompt for a video generation model.
-    
-    CRITICAL PROMPT INSTRUCTIONS FOR VIDEO GENERATION:
-    - SCRIPT LENGTH: The spoken script for EACH scene must contain approximately {target_words_per_scene} words. It is vital that you hit this target word count to align with the scene duration.
-    - NO STAGE DIRECTIONS: Do not write descriptions like "a college student with a stressed expression" or "expression changes to relief". The script must be purely spoken words, absolutely zero action brackets.
-    - LOOK AND FEEL COME ONLY FROM THE USER'S IDEA AND GUIDELINES BELOW. Follow them exactly. Do not add camera, lighting or style requirements the user did not ask for. If a guideline is missing, make no assumption about it.
-{guideline_lines}
-    
-    VIDEO CONTEXT (one paragraph, applies to every scene):
-    - Who the speaker is, where the video is filmed, and the overall setting that stays the same across scenes, taken from the idea and the context pictures (and consistent with the asset bible, without repeating it).
-    - It is added to every scene's video prompt, so keep it to what is true for the whole video. No dialogue, no actions, and do not restate the guidelines word for word; they are added automatically.
-    
-    SCENE FIELDS:
-    - description ("What happens"): only what the subject does and what visibly happens in this scene. No camera, lighting or location details.
-    - context ("Context"): only what is specific to THIS scene: a change of location or background, framing, props, time of day, and how it connects to the previous scene. Do not repeat the video context; leave it short if nothing changes.
-    
-    FORMATTING REQUIREMENT FOR THE 'prompt' FIELD:
-    The output 'prompt' string MUST be formatted exactly like this, on three lines:
-    What They Say: [exactly what the subject says, same as script]
-    What happens: [same as description]
-    Context: [same as context]
-    
-    Make sure you follow these constraints precisely.
-    """
+    prompt = prompts.render(
+        "script_writer",
+        idea=idea,
+        product_name_rule=product_name_rule(product_name),
+        product_led_rules=product_led_script_rules(video_type),
+        context_pictures_section=context_pictures_section,
+        asset_bible_section=asset_bible_section,
+        structure_section=structure_section,
+        hook_instruction=hook_instruction,
+        num_scenes=num_scenes,
+        target_words_per_scene=target_words_per_scene,
+        guideline_lines=guideline_lines,
+    )
 
     response = client.models.generate_content(
         model=llm_model,
@@ -616,23 +493,7 @@ def analyse_reference_video(video_path: str, mime_type: str = "video/mp4") -> Di
     """
     client = get_client()
     video_file = upload_to_files_api(client, video_path, mime_type, timeout_seconds=300)
-    prompt = f"""
-    You are breaking down a short video ad so that its structure can be reused for a different product.
-    Watch and listen to all of it.
-
-    Split it into the parts a script would have: each part does one job (hook, problem, product
-    reveal, proof, demonstration, offer, call to action...). A part is 4 to 10 seconds long: merge a
-    shorter moment into the part next to it. Several
-    quick shots that do one job together are ONE part. Use at most {REFERENCE_MAX_PARTS} parts; the
-    parts cover the whole video in order with no gaps.
-
-    For each part give the start and end second, its job, exactly what is said, what happens and how
-    it is filmed. Then describe the hook, pacing, captions, music and call to action, and the style
-    as short instructions a video model could follow (e.g. "Shot on a phone front camera",
-    "Soft window light", "Talks fast, like to a friend").
-
-    Report only what is in the video. Leave a field empty rather than guessing.
-    """
+    prompt = prompts.render("reference_breakdown", max_parts=REFERENCE_MAX_PARTS)
     response = client.models.generate_content(
         model=REFERENCE_MODEL_ID,
         contents=[video_file, prompt],
@@ -687,12 +548,7 @@ def take_check_photo_rule(has_photo: bool) -> str:
     """The extra line of the take check when the creator photo is attached."""
     if not has_photo:
         return ""
-    return (
-        "         The attached photo shows the real speaker. Also report it when a face that is clearly and\n"
-        "         fully visible in the clip is not the same woman or man as in the photo (different face\n"
-        "         shape, eyes, eyebrows, nose or lips). Do NOT report it when the face is hidden, turned\n"
-        "         away or only partly in frame, or for a different expression, angle or light.\n"
-    )
+    return prompts.text("take_check.photo_rule")
 
 
 def check_take(
@@ -718,35 +574,19 @@ def check_take(
     video_file = upload_to_files_api(client, video_path, "video/mp4", timeout_seconds=120)
     has_photo = bool(person_photo_path and os.path.exists(person_photo_path))
 
-    details = "\n".join(f"    - {line}" for line in (asset_lines or [])) or "    (none given)"
-    pictures = "\n".join(f"    - {d}" for d in (picture_descriptions or []) if d) or "    (none given)"
-    prompt = f"""
-    You are checking one short clip of a UGC-style video ad made by a video model. Watch and listen to it.
-
-    The speaker was supposed to say exactly:
-    "{script}"
-
-    What must stay consistent in the video:
-{details}
-
-    Reference pictures the video was given (described in words):
-{pictures}
-
-    1. spoken_text: write down exactly what is said, word for word, as you hear it. Do not correct it
-       towards the script.
-    2. issues: list only problems a viewer would clearly notice:
-       - speech: words cut off at the start or end, gibberish, or a second voice.
-         (Do NOT report differences from the script here; that is compared separately.)
-       - product: a product or prop that contradicts the description (wrong colour, count, shape, label).
-       - speaker: the person clearly contradicts the description, or changes during the clip.
-{take_check_photo_rule(has_photo)}       - hands_or_face: deformed, extra or merging fingers or hands; a distorted face; an arm that
-         could not belong to the person in frame (detached, or bent in an impossible way).
-       - scale: a product clearly too large or too small next to the hand, wrist or face holding it.
-       - on_screen_text: garbled or misspelled text on a label, a screen or as an overlay.
-       - cut: an abrupt jump to a different person or place.
-       - audio: {"background music or a soundtrack (the clip must have the voice and room sound only)" if voice_only else "loud noise or distorted sound"}.
-    Be strict about what counts: when unsure, do not report it. An empty list is the normal result.
-    """
+    details = "\n".join(f"- {line}" for line in (asset_lines or [])) or "(none given)"
+    pictures = "\n".join(f"- {d}" for d in (picture_descriptions or []) if d) or "(none given)"
+    prompt = prompts.render(
+        "take_check",
+        script=script,
+        details=details,
+        pictures=pictures,
+        photo_rule=take_check_photo_rule(has_photo),
+        audio_rule=(
+            "background music or a soundtrack (the clip must have the voice and room sound only)"
+            if voice_only else "loud noise or distorted sound"
+        ),
+    )
     response = client.models.generate_content(
         model=TAKE_CHECK_MODEL_ID,
         contents=[video_file] + ([_image_part(person_photo_path)] if has_photo else []) + [prompt],

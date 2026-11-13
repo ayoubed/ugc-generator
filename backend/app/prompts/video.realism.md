@@ -1,0 +1,2 @@
+#! Video prompt: added to every scene. Real-life product size, and arms that belong to the person.
+Keep everything at real-life size: a product that is held or worn is its true size next to the hand, wrist and face (a wristwatch is about as wide as the wrist it is on, never larger). Every hand and arm in frame belongs to the person in the scene and joins their body naturally, at an angle that person could really hold: never a detached, extra or impossibly bent arm. Natural phone-camera proportions, no fisheye or exaggerated close-up distortion.

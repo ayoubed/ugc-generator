@@ -10,7 +10,7 @@ import firebase_admin
 from firebase_admin import firestore
 from app.storage import upload_file, download_file, get_download_url, delete_file
 from app.model_registry import get_video_model, refine_model_for_take
-from app import elevenlabs
+from app import elevenlabs, prompts
 from app.captions import caption_style
 from app.errors import user_message
 from app.pipeline import (
@@ -414,12 +414,7 @@ def collect_reference_specs(
 
 
 # What the video model is told about the creator photo when it is sent as a reference.
-CREATOR_REFERENCE_TEXT = (
-    "The person who speaks in this video. Whenever a person is visible, it is this exact person: "
-    "the same face, hair or head covering, skin tone and clothes. The first frame may show only part "
-    "of them (hands, a chin, the mouth). If more of the face comes into view, it must be the face in "
-    "this picture: the same eyes, eyebrows, nose, lips and face shape. Never a different person."
-)
+CREATOR_REFERENCE_TEXT = prompts.text("video.creator_reference")
 
 
 def creator_reference_spec(

@@ -1,0 +1,2 @@
+#! Video prompt: describes the creator photo when it is sent as a reference picture, so the person stays the same.
+The person who speaks in this video. Whenever a person is visible, it is this exact person: the same face, hair or head covering, skin tone and clothes. The first frame may show only part of them (hands, a chin, the mouth). If more of the face comes into view, it must be the face in this picture: the same eyes, eyebrows, nose, lips and face shape. Never a different person.
