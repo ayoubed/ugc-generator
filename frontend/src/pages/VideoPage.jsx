@@ -10,6 +10,7 @@ import TakesUsed from '../components/TakesUsed';
 import FinishCard from '../components/FinishCard';
 import MusicCard from '../components/MusicCard';
 import VoiceCard from '../components/VoiceCard';
+import EditorCard from '../components/EditorCard';
 import EndCardCard from '../components/EndCardCard';
 import SaveIndicator from '../components/SaveIndicator';
 import { useAuth } from '../hooks/useAuth';
@@ -555,6 +556,13 @@ function ProjectVideo({ projectId: id }) {
                 </div>
               </div>
             </div>
+
+            <EditorCard
+              project={project}
+              scenes={included}
+              fallbackSeconds={Number(project?.settings?.duration) || 8}
+              disabled={stitching}
+            />
 
             <div className="gen-footer" role="region" aria-label="Stitch the final video">
               <button type="button" id="video-back-generate" className="btn btn-secondary btn-lg" onClick={() => goTo(stepPath(id, STEP.GENERATE))}>

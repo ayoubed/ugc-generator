@@ -5,8 +5,9 @@ import LoadingSpinner from './LoadingSpinner';
 import { useModels } from '../hooks/useModels';
 import { updateProjectSettings } from '../hooks/useProject';
 import { generateMusic } from '../services/api';
+import { musicVolumePercent } from '../utils/edits';
 import { friendlyError } from '../utils/errors';
-import { MUSIC_VOLUME_OPTIONS, projectMusic, toMillis } from '../utils/projectProgress';
+import { projectMusic, toMillis } from '../utils/projectProgress';
 
 const MAX_MUSIC_BYTES = 50 * 1024 * 1024; // same limit as the storage rules
 const STALE_MUSIC_MS = 10 * 60 * 1000; // same limit the API uses
@@ -33,7 +34,14 @@ export default function MusicCard({ project, now, disabled = false }) {
   const [error, setError] = useState('');
 
   const chosenModel = modelId || music?.model || defaultMusicModel;
-  const volume = music?.volume || 'medium';
+  const volume = music?.volume ?? 'medium';
+  const [volumeDraft, setVolumeDraft] = useState(null); // while the slider is being moved
+  const commitVolume = () => {
+    if (volumeDraft === null) return;
+    const next = volumeDraft;
+    setVolumeDraft(null);
+    if (next !== musicVolumePercent(volume)) save({ music: { ...project.settings.music, volume: next } });
+  };
 
   const save = async (partial) => {
     setError('');
@@ -125,21 +133,24 @@ export default function MusicCard({ project, now, disabled = false }) {
           {music.url && (
             <audio className="music-player" controls preload="none" src={music.url} aria-label="Preview the music track" />
           )}
-          <div className="music-volume" role="group" aria-labelledby={`${baseId}-vol`}>
-            <span className="music-label" id={`${baseId}-vol`}>Volume under the voice</span>
-            <div className="music-segmented">
-              {MUSIC_VOLUME_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`music-seg ${volume === option.value ? 'is-active' : ''}`}
-                  aria-pressed={volume === option.value}
-                  onClick={() => save({ music: { ...project.settings.music, volume: option.value } })}
-                  disabled={locked}
-                >
-                  {option.label}
-                </button>
-              ))}
+          <div className="music-volume">
+            <label className="music-label" htmlFor={`${baseId}-vol`}>Volume under the voice</label>
+            <div className="music-volume-row">
+              <input
+                id={`${baseId}-vol`}
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={volumeDraft ?? musicVolumePercent(volume)}
+                disabled={locked}
+                onChange={(e) => setVolumeDraft(Number(e.target.value))}
+                // Saved when the slider is let go, not on every step of the drag.
+                onPointerUp={commitVolume}
+                onKeyUp={commitVolume}
+                onBlur={commitVolume}
+              />
+              <output htmlFor={`${baseId}-vol`}>{volumeDraft ?? musicVolumePercent(volume)}%</output>
             </div>
           </div>
         </div>

@@ -43,6 +43,12 @@ class VoiceServiceError(RuntimeError):
 def _message_for(status_code: int, doing: str) -> str:
     if status_code in (401, 403):
         return "The voice service rejected its key. This has to be fixed on the server."
+    if status_code == 402:
+        # Seen for music on a free account: "Music API is not available for free users."
+        return (
+            "This needs a paid ElevenLabs plan, or the plan's credit has run out. "
+            "Upgrade or top up in ElevenLabs, or pick another option."
+        )
     if status_code == 429:
         return "The voice service is busy or its usage allowance ran out. Wait a minute and try again."
     if status_code == 404:

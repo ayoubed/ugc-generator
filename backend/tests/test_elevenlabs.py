@@ -80,7 +80,7 @@ def test_changing_a_voice_sends_the_audio_and_saves_what_comes_back(tmp_path, mo
 
 
 @pytest.mark.parametrize("code,expected", [
-    (401, "rejected its key"), (429, "usage allowance"), (404, "no longer exists"), (503, "had a problem"), (422, "not accepted"),
+    (401, "rejected its key"), (402, "needs a paid ElevenLabs plan"), (429, "usage allowance"), (404, "no longer exists"), (503, "had a problem"), (422, "not accepted"),
 ])
 def test_failures_are_reported_in_plain_words(code, expected, tmp_path, monkeypatch):
     source = tmp_path / "scene.mp3"

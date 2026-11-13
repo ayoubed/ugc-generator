@@ -1,3 +1,4 @@
+import { currentEdits, sameEdits } from './edits';
 // Shared helpers that describe where a project is in the journey (scenes, takes, final videos).
 import { projectSceneAudio } from '../data/guidelineTags';
 import { sameAssetBible } from './assetBible';
@@ -306,7 +307,9 @@ export function isStitching(project, now = Date.now()) {
 export function projectMusic(project) {
   const music = project?.settings?.music;
   if (!music || music.source === 'none' || !music.storageRef) return null;
-  return { ...music, volume: MUSIC_VOLUME_OPTIONS.some((o) => o.value === music.volume) ? music.volume : 'medium' };
+  // A number from the volume slider (0 to 100), or low / medium / high from before it existed.
+  const numeric = typeof music.volume === 'number' && music.volume >= 0 && music.volume <= 100;
+  return { ...music, volume: numeric || MUSIC_VOLUME_OPTIONS.some((o) => o.value === music.volume) ? music.volume : 'medium' };
 }
 
 /** The one voice chosen for the whole video ({id, name}), or null when each scene keeps its own. */
@@ -429,6 +432,10 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
             finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
         : '';
       if (now !== then) return 'The end card changed since this version was stitched.';
+    }
+    // Same for the editor: only versions that recorded their edits can be compared.
+    if ('edits' in finalVideo && !sameEdits(finalVideo.edits, currentEdits(project, scenes))) {
+      return 'The edit (kept parts or volumes) changed since this version was stitched.';
     }
     // Versions stitched before the voice choice existed have no voice field, so they aren't flagged.
     if ('voice' in finalVideo && (finalVideo.voice?.id || '') !== (projectVoice(project)?.id || '')) {
