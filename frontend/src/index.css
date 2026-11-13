@@ -3486,6 +3486,7 @@ button.tl-block { cursor: pointer; }
 .idea-label { font-size: 1.05rem; font-weight: 600; }
 .idea-pictures { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
 .idea-pictures .form-group { margin-bottom: 0; }
+.idea-pictures.is-single { grid-template-columns: minmax(0, 1fr); }
 .idea-format { display: grid; grid-template-columns: 1.2fr 0.6fr 1.4fr; gap: var(--space-4); align-items: start; }
 .idea-format .form-group { margin-bottom: 0; }
 .idea-format .music-segmented { display: flex; width: 100%; }

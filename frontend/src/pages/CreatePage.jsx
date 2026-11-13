@@ -40,6 +40,11 @@ import {
   projectSceneAudio,
 } from '../data/guidelineTags';
 
+const VIDEO_TYPES = [
+  { value: 'creator', title: 'A person talks to camera', sub: 'Someone presents the product, like a creator’s video.' },
+  { value: 'product', title: 'The product, with a narrator', sub: 'Hands and close-ups of the product. A voice you never see talks over it.' },
+];
+
 const HOOK_STYLES = [
   'Auto-Select (AI chooses the best hook)',
   'The Snippet (In Media Res)',
@@ -63,6 +68,9 @@ function CreateIdea({ projectId: id }) {
   const [idea, setIdea] = useState('');
   // The product's real name: without it the script may not name the product at all.
   const [productName, setProductName] = useState('');
+  // 'creator': a person talks to the camera. 'product': product shots with a narrator who is never seen.
+  const [videoType, setVideoType] = useState('creator');
+  const productLed = videoType === 'product';
   const [numScenes, setNumScenes] = useState(3);
   const [hookStyle, setHookStyle] = useState(HOOK_STYLES[0]);
   const [customHookDesc, setCustomHookDesc] = useState('');
@@ -189,6 +197,7 @@ function CreateIdea({ projectId: id }) {
         if (project.settings) {
           const s = project.settings;
           if (s.productName) setProductName(s.productName);
+          if (s.videoType === 'product') setVideoType('product');
           if (s.numScenes) setNumScenes(s.numScenes);
           if (s.hookStyle) setHookStyle(s.hookStyle);
           if (s.customHookDesc) setCustomHookDesc(s.customHookDesc);
@@ -273,6 +282,7 @@ function CreateIdea({ projectId: id }) {
 
   const buildSettings = (overrides = {}) => ({
     productName: productName.trim(),
+    videoType,
     numScenes,
     hookStyle,
     customHookDesc: hookStyle === 'Custom Hook' ? customHookDesc : '',
@@ -426,7 +436,12 @@ function CreateIdea({ projectId: id }) {
       return;
     }
 
-    if (!startingImageRef && !selectedFile) {
+    if (productLed) {
+      if (!(project?.globalImages || []).some((picture) => picture?.storageRef)) {
+        setError('Add a picture of the product. The first scene starts from it.');
+        return;
+      }
+    } else if (!startingImageRef && !selectedFile) {
       setError('Add a photo of the person who speaks.');
       return;
     }
@@ -459,11 +474,11 @@ function CreateIdea({ projectId: id }) {
       // the person and product the same way. They can be edited on the Script step.
       let details = assetBible;
       let writtenFrom = detailsFrom;
-      const source = detailsSource({ idea, productName, startingImageRef: finalImageRef, globalImages: project?.globalImages });
+      const source = detailsSource({ idea, productName, startingImageRef: finalImageRef, globalImages: project?.globalImages, videoType });
       if (shouldWriteDetails(assetBible, detailsFrom, source)) {
         setProgress('Writing the consistent details…');
         try {
-          details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId, id, productName));
+          details = normalizeAssetBible(await extractAssets(idea.trim(), scriptModelId, id, productName, videoType));
           setAssetBible(details);
           writtenFrom = source;
           setDetailsFrom(source);
@@ -483,6 +498,7 @@ function CreateIdea({ projectId: id }) {
       await generateScenes(id, {
         idea: idea.trim(),
         product_name: productName.trim() || null,
+        video_type: videoType,
         num_scenes: numScenes,
         target_words_per_scene: wordsPerScene,
         hook_style: hookStyle,
@@ -564,7 +580,7 @@ function CreateIdea({ projectId: id }) {
           <div className="page-head-text">
             <h1 className="page-title">What&apos;s the video?</h1>
             <p className="page-subtitle" style={{ color: 'var(--text-secondary)' }}>
-              Describe it and add the person and the product. Everything else has a sensible default you can change below.
+              Describe it and add {productLed ? 'the product' : 'the person and the product'}. Everything else has a sensible default you can change below.
             </p>
           </div>
           <SaveIndicator state={saveState} onRetry={saveNow} />
@@ -585,6 +601,24 @@ function CreateIdea({ projectId: id }) {
           <div className="idea-columns">
           <div className="idea-main">
           <section className="card card-white" aria-labelledby="idea-heading">
+            <div className="form-group">
+              <span className="label" id="video-type-label">Kind of video</span>
+              <div className="preset-grid" role="group" aria-labelledby="video-type-label">
+                {VIDEO_TYPES.map((type) => (
+                  <button
+                    key={type.value}
+                    type="button"
+                    className={`preset-card ${videoType === type.value ? 'is-active' : ''}`}
+                    aria-pressed={videoType === type.value}
+                    onClick={() => setVideoType(type.value)}
+                  >
+                    <span className="preset-name">{type.title}</span>
+                    <span className="preset-desc">{type.sub}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="form-group">
               <label className="label idea-label" id="idea-heading" htmlFor="idea-text">Your idea</label>
               <textarea
@@ -620,7 +654,8 @@ function CreateIdea({ projectId: id }) {
               </p>
             </div>
 
-            <div className="idea-pictures">
+            <div className={`idea-pictures ${productLed ? 'is-single' : ''}`}>
+              {!productLed && (
               <div>
                 <ImageUpload
                   label="The person"
@@ -635,9 +670,12 @@ function CreateIdea({ projectId: id }) {
                 />
                 {uploadingImage && <LoadingSpinner size="sm" label="Uploading the photo…" />}
               </div>
+              )}
               <ReferenceImageUploader
-                label="The product and anything else to show"
-                hint="Optional. Say what each picture is, e.g. “The product: a matte black water bottle”."
+                label={productLed ? 'The product' : 'The product and anything else to show'}
+                hint={productLed
+                  ? 'At least one picture: the first scene starts from the first one. Say what each picture is, e.g. “The watch, front view”.'
+                  : 'Optional. Say what each picture is, e.g. “The product: a matte black water bottle”.'}
                 images={project?.globalImages || []}
                 maxImages={pictureLimit}
                 storagePrefix={user ? `users/${user.uid}/projects/${id}/context` : ''}
@@ -746,12 +784,13 @@ function CreateIdea({ projectId: id }) {
                 setAssetBible(next);
                 // Typed details are the user's from then on; ones the app just wrote can be refreshed.
                 setDetailsFrom(info?.written
-                  ? detailsSource({ idea, productName, startingImageRef, globalImages: project?.globalImages })
+                  ? detailsSource({ idea, productName, startingImageRef, globalImages: project?.globalImages, videoType })
                   : '');
               }}
               idea={idea}
               projectId={id}
               productName={productName}
+              videoType={videoType}
               scriptModel={scriptModelId}
               disabled={generating}
             />

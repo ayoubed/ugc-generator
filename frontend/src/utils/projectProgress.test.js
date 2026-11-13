@@ -5,7 +5,9 @@ import {
   currentFinalVideo,
   effectiveImageSource,
   finalVideoChangeReason,
+  isProductLed,
   projectVoice,
+  startPictureRef,
   scenesToRemake,
   formatElapsed,
   formatSceneList,
@@ -223,5 +225,21 @@ describe('which scenes get a new take', () => {
 
   it('picks every scene with a video when asked for all', () => {
     expect(scenesToRemake([take('0'), { id: '1' }, take('2', { skipped: true }), take('3')], null, 'all')).toEqual(['0', '3']);
+  });
+});
+
+describe('a product-led video', () => {
+  const project = { settings: { videoType: 'product' }, startingImageRef: 'person.jpg', globalImages: [{ description: 'no file' }, { storageRef: 'watch.jpg' }] };
+
+  it('is one only when the project says so', () => {
+    expect(isProductLed(project)).toBe(true);
+    expect(isProductLed({ settings: {} })).toBe(false);
+    expect(isProductLed(null)).toBe(false);
+  });
+
+  it('starts its first scene from the product picture, not from a person', () => {
+    expect(startPictureRef(project)).toBe('watch.jpg');
+    expect(startPictureRef({ ...project, settings: {} })).toBe('person.jpg');
+    expect(startPictureRef({ settings: { videoType: 'product' }, startingImageRef: 'person.jpg' })).toBe('');
   });
 });

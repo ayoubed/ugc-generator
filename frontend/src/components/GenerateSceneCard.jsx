@@ -7,6 +7,7 @@ import EndPicturePicker from './EndPicturePicker';
 import { useStorageUrl } from '../hooks/useStorageUrl';
 import { takeContextPictureCount, usedCreatorPhoto } from '../utils/takePictures';
 import {
+  isProductLed,
   FROM_PREVIOUS_SOURCES,
   activeTakeNumber,
   canRefineTake,
@@ -422,6 +423,7 @@ export default function GenerateSceneCard({
               value={source}
               onChange={handleSourceChange}
               creatorImageUrl={creatorImageUrl}
+              productLed={isProductLed(project)}
               customImageUrl={scene.customStartImageUrl || ''}
               storagePrefix={storagePrefix}
               onCustomImageChange={onCustomImageChange}

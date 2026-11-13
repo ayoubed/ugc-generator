@@ -80,7 +80,7 @@ describe('Idea step: writing the script', () => {
     await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
     expect(await screen.findByText('script page')).toBeTruthy();
 
-    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', '');
+    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', '', 'creator');
     const [, saved, savedSettings] = saveProjectWithSettings.mock.calls.at(-1);
     expect(saved.idea).toBe('A mug that keeps coffee hot all day.');
     expect(savedSettings.assetBible).toEqual(DETAILS);
@@ -311,7 +311,7 @@ describe('Idea step: the product name', () => {
     await userEvent.type(screen.getByLabelText('Product or brand name'), ' Luma One ');
     await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
     await screen.findByText('script page');
-    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', ' Luma One ');
+    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', ' Luma One ', 'creator');
     expect(generateScenes.mock.calls[0][1].product_name).toBe('Luma One');
     expect(saveProjectWithSettings.mock.calls.at(-1)[2].productName).toBe('Luma One');
   });
@@ -375,5 +375,46 @@ describe('Idea step: details the app wrote follow your pictures', () => {
     expect(extractAssets).not.toHaveBeenCalled();
     expect(generateScenes.mock.calls[0][1].asset_bible.character).toBe('An invented person. She wears a brown headscarf.');
     expect(saveProjectWithSettings.mock.calls.at(-1)[2].assetBibleFrom).toBe('');
+  });
+});
+
+describe('Idea step: a product-led video', () => {
+  const WATCH = [{ id: 'w', storageRef: 'users/u1/projects/p1/context/watch.jpg', url: 'https://files.test/watch.jpg', description: 'The watch' }];
+  const choose = (name) => userEvent.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }));
+
+  it('starts as a person talking to camera, and asks for her photo', async () => {
+    open();
+    await formLoaded();
+    expect(screen.getByRole('button', { name: /^A person talks to camera/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('The person')).toBeTruthy();
+  });
+
+  it('needs no photo of a person, only a picture of the product', async () => {
+    const bar = open({ project: { startingImageRef: '', globalImages: [] } });
+    await formLoaded();
+    await choose('The product, with a narrator');
+    expect(screen.queryByText('The person')).toBeNull();
+    expect(screen.getByText(/the first scene starts from the first one/)).toBeTruthy();
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Add a picture of the product. The first scene starts from it.');
+    expect(generateScenes).not.toHaveBeenCalled();
+  });
+
+  it('writes the details and the script as a product-led video, and saves the choice', async () => {
+    const bar = open({ project: { startingImageRef: '', globalImages: WATCH } });
+    await formLoaded();
+    await choose('The product, with a narrator');
+    await userEvent.click(bar.getByRole('button', { name: 'Write the script →' }));
+    await screen.findByText('script page');
+    expect(extractAssets).toHaveBeenCalledWith('A mug that keeps coffee hot all day.', 'script-model', 'p1', '', 'product');
+    expect(generateScenes.mock.calls[0][1].video_type).toBe('product');
+    expect(saveProjectWithSettings.mock.calls.at(-1)[2].videoType).toBe('product');
+  });
+
+  it('opens a saved product-led project as one', async () => {
+    open({ project: { globalImages: WATCH, settings: { videoType: 'product' } } });
+    await formLoaded();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^The product, with a narrator/ }).getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.queryByText('The person')).toBeNull();
   });
 });

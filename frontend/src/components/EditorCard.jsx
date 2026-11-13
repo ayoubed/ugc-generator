@@ -34,7 +34,9 @@ const SAVE_DELAY_MS = 500;
  *                            when the page keeps the caption texts itself; otherwise they are saved here
  */
 const STALE_PACKAGE_MS = 10 * 60 * 1000; // same limit the API uses
-const VOICE_DRIFT_SECONDS = 0.1;          // more than this between lips and voice is noticeable
+const VOICE_DRIFT_SECONDS = 0.25;         // more than this between lips and voice is noticeable
+const RESYNC_PAUSE_MS = 2000;
+const PLAYHEAD_REDRAW_MS = 80;
 
 export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false, captions = null }) {
   const baseId = useId();
@@ -45,6 +47,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // in place of the scene's own sound, so the choice is heard before stitching.
   const dubs = useRef({});
   const askedVoice = useRef('');
+  const lastResync = useRef(0);
+  const lastDraw = useRef(0);
   const askedExport = useRef(false);
   const audio = useRef(null);
   const scroller = useRef(null);
@@ -314,11 +318,22 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       stepOver();
       return;
     }
-    // The picture and the chosen voice are two players: pull the voice back when it drifts.
+    // The picture and the chosen voice are two players: pull the voice back when it drifts. Every
+    // such jump is a small break in the sound, so only for a drift that shows on the lips, and not
+    // again until the player has had time to settle (phones need a moment after a seek).
     const voiceOver = dub();
-    if (voiceOver && Math.abs(voiceOver.currentTime - element.currentTime) > VOICE_DRIFT_SECONDS) {
+    const nowMs = Date.now();
+    if (
+      voiceOver && nowMs - lastResync.current > RESYNC_PAUSE_MS
+      && Math.abs(voiceOver.currentTime - element.currentTime) > VOICE_DRIFT_SECONDS
+    ) {
+      lastResync.current = nowMs;
       voiceOver.currentTime = element.currentTime;
     }
+    // The playhead is redrawn about 12 times a second: redrawing the whole editor on every frame
+    // made the sound stutter on phones.
+    if (nowMs - lastDraw.current < PLAYHEAD_REDRAW_MS) return;
+    lastDraw.current = nowMs;
     setTime(timelineTime(timeline, place.index, element.currentTime));
   };
   // A smooth playhead while playing (the player itself reports only a few times a second).

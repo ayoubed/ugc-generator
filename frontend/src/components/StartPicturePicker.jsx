@@ -29,6 +29,7 @@ export default function StartPicturePicker({
   value,
   onChange,
   creatorImageUrl = '',
+  productLed = false,
   customImageUrl = '',
   storagePrefix = '',
   onCustomImageChange,
@@ -46,7 +47,9 @@ export default function StartPicturePicker({
   };
 
   const options = [
-    { value: 'creator', title: 'Creator photo', sub: 'The photo from Step 1' },
+    productLed
+      ? { value: 'creator', title: 'Product picture', sub: 'The first product picture from Step 1' }
+      : { value: 'creator', title: 'Creator photo', sub: 'The photo from Step 1' },
     ...(isFirst
       ? []
       : [

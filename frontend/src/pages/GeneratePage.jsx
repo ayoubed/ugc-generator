@@ -39,6 +39,7 @@ import {
   sceneHasVideo,
   sceneStatus,
   scenesToRemake,
+  startPictureRef,
   sceneAlternatives,
   sceneLabels,
   sceneSlot,
@@ -94,7 +95,8 @@ function GenerateVideos({ projectId: id }) {
   const { user } = useAuth();
   const { project, loading: projectLoading } = useProject(id);
   const { scenes, loading: scenesLoading } = useScenes(id);
-  const creatorImageUrl = useStorageUrl(project?.startingImageRef || '');
+  // What a scene shows as its "photo of Step 1": the creator photo, or the product picture of a product-led video.
+  const creatorImageUrl = useStorageUrl(startPictureRef(project));
   const { videoModels } = useModels();
 
   // Unsaved prompt edits per scene, shown on top of the live Firestore scenes.

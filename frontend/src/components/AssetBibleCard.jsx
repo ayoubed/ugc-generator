@@ -10,7 +10,7 @@ import { assetBibleFilledCount, normalizeAssetBible } from '../utils/assetBible'
  * every scene. "Fill in from my pictures" drafts them with the script model; the user edits from there.
  * `embedded` drops the card frame and title, for use inside a section that already has them.
  */
-export default function AssetBibleCard({ value, onChange, idea, projectId = null, productName = '', scriptModel, disabled = false, embedded = false }) {
+export default function AssetBibleCard({ value, onChange, idea, projectId = null, productName = '', videoType = 'creator', scriptModel, disabled = false, embedded = false }) {
   const baseId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -25,7 +25,7 @@ export default function AssetBibleCard({ value, onChange, idea, projectId = null
     setError('');
     try {
       // The second argument tells the page these were written by the app, not typed.
-      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel, projectId, productName)), { written: true });
+      onChange(normalizeAssetBible(await extractAssets(idea.trim(), scriptModel, projectId, productName, videoType)), { written: true });
     } catch (err) {
       console.error('Could not fill in the details:', err);
       setError(friendlyError(err));

@@ -48,7 +48,7 @@ export async function fetchModels() {
  * Draft the Asset Bible (speaker, products and props, setting, look) from a video idea.
  * Calls POST /api/extract-assets. Nothing is saved; returns { character, hero_props, setting, visual_style }.
  */
-export async function extractAssets(idea, llmModel, projectId = null, productName = '') {
+export async function extractAssets(idea, llmModel, projectId = null, productName = '', videoType = 'creator') {
   const authHeaders = await getAuthHeaders();
   const response = await fetch('/api/extract-assets', {
     method: 'POST',
@@ -62,6 +62,7 @@ export async function extractAssets(idea, llmModel, projectId = null, productNam
       llm_model: llmModel || null,
       project_id: projectId || null,
       product_name: productName?.trim() || null,
+      video_type: videoType === 'product' ? 'product' : 'creator',
     }),
   });
 

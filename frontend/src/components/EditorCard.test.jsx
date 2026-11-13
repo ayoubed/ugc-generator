@@ -503,12 +503,15 @@ describe('hearing the chosen voice in the editor', () => {
     const voiceOver = screen.getByTestId('dub-0');
     const at = (element, seconds) => Object.defineProperty(element, 'currentTime', { value: seconds, configurable: true, writable: true });
     at(current(), 2);
-    at(voiceOver, 2.3);                                   // ran ahead
+    at(voiceOver, 2.1);                                   // a little ahead: left alone, a jump would be heard
+    fireEvent.timeUpdate(current());
+    expect(voiceOver.currentTime).toBe(2.1);
+    at(voiceOver, 2.4);                                   // enough to show on the lips: pulled back
     fireEvent.timeUpdate(current());
     expect(voiceOver.currentTime).toBe(2);
-    at(voiceOver, 2.05);                                  // close enough: left alone
+    at(voiceOver, 2.5);                                   // not again straight away
     fireEvent.timeUpdate(current());
-    expect(voiceOver.currentTime).toBe(2.05);
+    expect(voiceOver.currentTime).toBe(2.5);
   });
 
   it('applies a volume or mute change at once, without restarting the scene', async () => {

@@ -41,3 +41,13 @@ describe('when the details are written before the script', () => {
     expect(shouldWriteDetails(FILLED, undefined, 'now')).toBe(false);
   });
 });
+
+describe('details of a product-led video', () => {
+  it('do not depend on a presenter photo, and are written again when the kind of video changes', () => {
+    const base = { idea: 'Ad', productName: '', startingImageRef: 'photo.jpg', globalImages: [{ storageRef: 'watch.jpg' }] };
+    const product = detailsSource({ ...base, videoType: 'product' });
+    expect(product).toBe(detailsSource({ ...base, startingImageRef: 'other.jpg', videoType: 'product' }));
+    expect(product).not.toBe(detailsSource(base));
+    expect(detailsSource({ ...base, videoType: 'creator' })).toBe(detailsSource(base));
+  });
+});

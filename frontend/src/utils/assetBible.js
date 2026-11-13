@@ -56,10 +56,12 @@ export function sameAssetBible(a, b) {
  * the video-wide pictures. Saved next to details the app wrote (settings.assetBibleFrom), so they
  * can be written again when one of these changes. Empty for details the user typed or edited.
  */
-export function detailsSource({ idea = '', productName = '', startingImageRef = '', globalImages = [] } = {}) {
+export function detailsSource({ idea = '', productName = '', startingImageRef = '', globalImages = [], videoType = '' } = {}) {
   const pictures = (globalImages || [])
     .filter((picture) => picture?.storageRef)
     .map((picture) => `${picture.storageRef}:${(picture.description || '').trim()}`);
+  // A product-led video has no presenter: her photo is not a source, and the type itself is.
+  if (videoType === 'product') return JSON.stringify([idea.trim(), productName.trim(), '', pictures, 'product']);
   return JSON.stringify([idea.trim(), productName.trim(), startingImageRef || '', pictures]);
 }
 

@@ -235,6 +235,20 @@ export const IMAGE_SOURCE_LABELS = {
   uploaded: 'Custom picture',
 };
 
+/** A product-led video: the product on screen and a narrator who is never seen (settings.videoType). */
+export function isProductLed(project) {
+  return project?.settings?.videoType === 'product';
+}
+
+/**
+ * The picture a scene starts from when it starts "from the photo of Step 1": the creator photo, or
+ * for a product-led video the first product picture (same rule as the server's start_picture_ref).
+ */
+export function startPictureRef(project) {
+  if (!isProductLed(project)) return project?.startingImageRef || '';
+  return (project?.globalImages || []).find((picture) => picture?.storageRef)?.storageRef || '';
+}
+
 /**
  * The starting picture a scene will actually use.
  * The first scene has no previous scene, so it can only start from the creator photo or a custom picture.
