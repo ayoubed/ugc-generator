@@ -20,6 +20,9 @@ def api_error(code, message):
     # Google answers a bad key with 400, which must not read as "reword your request".
     (api_error(400, "API key not valid. Please pass a valid API key."), "rejected the app's key"),
     (api_error(404, "models/x is not found"), "not available"),
+    # Seen in production: takes failed with this and the app said "busy, wait a minute".
+    (api_error(402, "Your prepayment credits are depleted. Please go to AI Studio to manage your project and billing."), "run out of credit"),
+    (api_error(429, "Your prepayment credits are depleted."), "run out of credit"),
     (api_error(503, "The service is currently unavailable."), "had a problem"),
 ])
 def test_model_service_errors_become_plain_sentences(error, expected):

@@ -599,22 +599,45 @@ def speech_match(script: str, spoken: str) -> float:
 SPEECH_MATCH_THRESHOLD = 0.85
 
 
+def _image_part(path: str):
+    with open(path, "rb") as f:
+        return types.Part.from_bytes(data=f.read(), mime_type=detect_image_mime(path))
+
+
+def take_check_photo_rule(has_photo: bool) -> str:
+    """The extra line of the take check when the creator photo is attached."""
+    if not has_photo:
+        return ""
+    return (
+        "         The attached photo shows the real speaker. Also report it when a face that is clearly and\n"
+        "         fully visible in the clip is not the same woman or man as in the photo (different face\n"
+        "         shape, eyes, eyebrows, nose or lips). Do NOT report it when the face is hidden, turned\n"
+        "         away or only partly in frame, or for a different expression, angle or light.\n"
+    )
+
+
 def check_take(
     video_path: str,
     script: str,
     asset_lines: Optional[List[str]] = None,
     picture_descriptions: Optional[List[str]] = None,
     voice_only: bool = True,
+    person_photo_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Watches a finished take and reports clear problems, so a bad take is noticed without watching it
     closely: speech that doesn't follow the script, a product or speaker that doesn't match the
     consistent details, deformed hands, garbled text, a jarring cut, unwanted music.
 
+    person_photo_path: the creator photo. With it, a face that is clearly not the person in the
+    photo is reported too: a description in words cannot catch that, and it happens when a scene
+    starts on a frame that shows only part of the face.
+
     Returns {"ok", "spokenText", "speechMatch", "issues": [{"kind", "detail"}]}. Raises on API errors.
     """
     client = get_client()
     video_file = upload_to_files_api(client, video_path, "video/mp4", timeout_seconds=120)
+    has_photo = bool(person_photo_path and os.path.exists(person_photo_path))
 
     details = "\n".join(f"    - {line}" for line in (asset_lines or [])) or "    (none given)"
     pictures = "\n".join(f"    - {d}" for d in (picture_descriptions or []) if d) or "    (none given)"
@@ -637,7 +660,7 @@ def check_take(
          (Do NOT report differences from the script here; that is compared separately.)
        - product: a product or prop that contradicts the description (wrong colour, count, shape, label).
        - speaker: the person clearly contradicts the description, or changes during the clip.
-       - hands_or_face: deformed, extra or merging fingers or hands; a distorted face.
+{take_check_photo_rule(has_photo)}       - hands_or_face: deformed, extra or merging fingers or hands; a distorted face.
        - on_screen_text: garbled or misspelled text on a label, a screen or as an overlay.
        - cut: an abrupt jump to a different person or place.
        - audio: {"background music or a soundtrack (the clip must have the voice and room sound only)" if voice_only else "loud noise or distorted sound"}.
@@ -645,7 +668,7 @@ def check_take(
     """
     response = client.models.generate_content(
         model=TAKE_CHECK_MODEL_ID,
-        contents=[video_file, prompt],
+        contents=[video_file] + ([_image_part(person_photo_path)] if has_photo else []) + [prompt],
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=TakeCheckResult,

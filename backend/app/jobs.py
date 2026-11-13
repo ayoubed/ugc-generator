@@ -364,7 +364,9 @@ def collect_reference_specs(
 # What the video model is told about the creator photo when it is sent as a reference.
 CREATOR_REFERENCE_TEXT = (
     "The person who speaks in this video. Whenever a person is visible, it is this exact person: "
-    "the same face, hair or head covering, skin tone and clothes."
+    "the same face, hair or head covering, skin tone and clothes. The first frame may show only part "
+    "of them (hands, a chin, the mouth). If more of the face comes into view, it must be the face in "
+    "this picture: the same eyes, eyebrows, nose, lips and face shape. Never a different person."
 )
 
 
@@ -382,6 +384,20 @@ def creator_reference_spec(
         return None
     _assert_owned_path(uid, creator, "creator photo")
     return {"scope": "creator", "storageRef": creator, "url": None, "description": CREATOR_REFERENCE_TEXT}
+
+
+def creator_photo_for_check(project_data: Dict[str, Any], uid: Optional[str], temp_dir: str) -> Optional[str]:
+    """The creator photo on disk, for the automatic take check. None when there is none or it can't be loaded."""
+    creator = project_data.get("startingImageRef") or ""
+    if not creator or (uid and not str(creator).startswith(f"users/{uid}/")):
+        return None
+    local_path = os.path.join(temp_dir, "creator_for_check" + (os.path.splitext(creator)[1].lower() or ".jpg"))
+    try:
+        download_file(creator, local_path)
+    except Exception as e:
+        logger.warning("Could not load the creator photo for the take check: %s", e)
+        return None
+    return local_path
 
 
 def download_reference_images(
@@ -816,6 +832,7 @@ def _run_video_generation_job_sync(
             try:
                 result = check_take(
                     local_output_video,
+                    person_photo_path=creator_photo_for_check(project_data, uid, temp_dir),
                     script=str(scene_data.get("script") or ""),
                     asset_lines=asset_bible_lines((project_data.get("settings") or {}).get("assetBible")),
                     picture_descriptions=[spec["description"] for spec in reference_specs],

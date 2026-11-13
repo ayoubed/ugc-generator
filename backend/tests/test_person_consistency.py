@@ -207,3 +207,57 @@ def test_a_missing_creator_photo_is_reported_in_plain_words(tmp_path, monkeypatc
     spec = creator_reference_spec({"startingImageRef": PHOTO}, "last_frame", used=0, limit=6, uid="u1")
     with pytest.raises(ValueError, match="Upload it again on the Idea step"):
         jobs.download_reference_images([spec], str(tmp_path), 6)
+
+
+# --- the automatic check compares the face with the creator photo -----------------------------
+
+def test_the_take_check_gets_the_creator_photo_and_a_rule_for_it(tmp_path, monkeypatch):
+    video = tmp_path / "take.mp4"; video.write_bytes(b"video")
+    photo = tmp_path / "person.jpg"; photo.write_bytes(b"\xff\xd8\xff photo")
+    sent = {}
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            sent["contents"] = contents
+
+            class Response:
+                text = '{"spoken_text": "Hi there.", "issues": [{"kind": "speaker", "detail": "The woman in the second half is not the woman in the photo."}]}'
+            return Response()
+
+    class Client:
+        models = Models()
+
+    monkeypatch.setattr(pipeline, "get_client", lambda: Client())
+    monkeypatch.setattr(pipeline, "upload_to_files_api", lambda client, path, mime, timeout_seconds=0: "video-file")
+    result = pipeline.check_take(str(video), script="Hi there.", person_photo_path=str(photo))
+    assert sent["contents"][0] == "video-file"
+    assert sent["contents"][1].inline_data.mime_type == "image/jpeg"
+    assert "The attached photo shows the real speaker" in sent["contents"][2]
+    assert "only partly in frame" in sent["contents"][2]
+    assert result["ok"] is False and result["issues"][0]["kind"] == "speaker"
+
+    pipeline.check_take(str(video), script="Hi there.")                                  # no photo: as before
+    assert len(sent["contents"]) == 2 and "attached photo" not in sent["contents"][1]
+    pipeline.check_take(str(video), script="Hi there.", person_photo_path=str(tmp_path / "gone.jpg"))
+    assert len(sent["contents"]) == 2
+
+
+def test_the_creator_photo_is_loaded_for_the_check_only_from_the_users_own_files(tmp_path, monkeypatch):
+    loaded = []
+    monkeypatch.setattr(jobs, "download_file", lambda ref, path: loaded.append(ref))
+    assert jobs.creator_photo_for_check({"startingImageRef": PHOTO}, "u1", str(tmp_path)).endswith("creator_for_check.jpg")
+    assert jobs.creator_photo_for_check({"startingImageRef": "users/u2/x.jpg"}, "u1", str(tmp_path)) is None
+    assert jobs.creator_photo_for_check({}, "u1", str(tmp_path)) is None
+    assert loaded == [PHOTO]
+
+
+def test_a_photo_that_cannot_be_loaded_does_not_stop_the_check(tmp_path, monkeypatch):
+    def broken(ref, path):
+        raise RuntimeError("storage is down")
+
+    monkeypatch.setattr(jobs, "download_file", broken)
+    assert jobs.creator_photo_for_check({"startingImageRef": PHOTO}, "u1", str(tmp_path)) is None
+
+
+def test_the_creator_reference_covers_a_face_that_comes_back_into_view():
+    assert "only part" in CREATOR_REFERENCE_TEXT and "Never a different person" in CREATOR_REFERENCE_TEXT

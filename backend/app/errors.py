@@ -12,6 +12,7 @@ MAX_LENGTH = 300
 
 _CONTENT_WORDS = ("safety", "blocked", "prohibited", "policy", "harm", "sensitive")
 _KEY_WORDS = ("api key", "api_key_invalid", "api_key")
+_CREDIT_WORDS = ("prepayment credits", "credits are depleted", "billing account", "payment required")
 _QUOTA_WORDS = ("quota", "rate limit", "resource_exhausted", "resource exhausted", "too many requests")
 
 
@@ -23,6 +24,11 @@ def _first_line(text: str) -> str:
 def _model_error(code: Optional[int], text: str) -> Optional[str]:
     """Message for an error answered by the model service, or None when it is not recognised."""
     lowered = text.lower()
+    if code == 402 or any(word in lowered for word in _CREDIT_WORDS):
+        return (
+            "The model account has run out of credit, so nothing can be generated. "
+            "Add credit in Google AI Studio (Billing), then try again."
+        )
     if code == 429 or any(word in lowered for word in _QUOTA_WORDS):
         return "The model is busy or its usage limit was reached. Wait a minute and try again."
     if any(word in lowered for word in _KEY_WORDS):
