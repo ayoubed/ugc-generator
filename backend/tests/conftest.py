@@ -123,7 +123,7 @@ def api(fake_db, monkeypatch):
     import app.main as main
     from app import jobs
     from app.auth import get_current_user
-    from app.routes import music, projects, reference
+    from app.routes import music, package, projects, reference
 
     user = {"uid": "u1", "email": "ana@example.com", "name": "Ana", "has_access_claim": True}
     main.app.dependency_overrides[get_current_user] = lambda: user
@@ -133,7 +133,7 @@ def api(fake_db, monkeypatch):
         started.append(coro.cr_code.co_name)
         coro.close()
 
-    for module in (jobs, music, projects, reference):
+    for module in (jobs, music, package, projects, reference):
         monkeypatch.setattr(module, "spawn_background", record, raising=False)
 
     client = TestClient(main.app)
