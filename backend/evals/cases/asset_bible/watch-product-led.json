@@ -1,0 +1,13 @@
+{
+  "about": "Product-led: the details describe hands and a narrator, never a face.",
+  "input": {
+    "idea": "Ad for a female watch. It's a luxurious watch that looks expensive but is affordable.",
+    "product_name": "Carré Royale",
+    "video_type": "product"
+  },
+  "expect": {
+    "must_contain": [
+      "Carré Royale"
+    ]
+  }
+}

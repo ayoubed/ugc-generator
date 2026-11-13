@@ -1,0 +1,22 @@
+{
+  "about": "No product name given. The script once named the watch 'Aura' on its own.",
+  "input": {
+    "idea": "Ad for a female watch. It's a luxurious watch that looks expensive but is affordable.",
+    "num_scenes": 5,
+    "target_words_per_scene": 12,
+    "context_image_descriptions": [
+      "silver watch with azure blue dial"
+    ],
+    "asset_bible": {
+      "hero_props": "A silver-colored metal wristwatch with an integrated link bracelet and a deep azure blue dial with a horizontal striped texture.",
+      "character": "A young woman in her early 20s. She wears a dark brown hijab and a long-sleeved, off-white ruched top.",
+      "setting": "A brightly lit bedroom with neutral-colored walls and a large white wardrobe.",
+      "voice": "A young adult female voice, calm and friendly, like sharing a recommendation with a friend."
+    }
+  },
+  "expect": {
+    "must_not_contain": [
+      "Aura"
+    ]
+  }
+}

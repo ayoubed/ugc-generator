@@ -22,3 +22,6 @@ list_*.py
 tests/
 pytest.ini
 requirements-dev.txt
+
+# Prompt try-outs are for development only
+evals/

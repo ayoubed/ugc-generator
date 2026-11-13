@@ -1,0 +1,24 @@
+{
+  "about": "Product-led: hands and close-ups with a narrator. No face, nobody talking to the camera.",
+  "input": {
+    "idea": "Ad for a female watch. It's a luxurious watch that looks expensive but is affordable.",
+    "num_scenes": 5,
+    "target_words_per_scene": 12,
+    "product_name": "Carré Royale",
+    "video_type": "product",
+    "context_image_descriptions": [
+      "silver watch with azure blue dial"
+    ],
+    "asset_bible": {
+      "hero_props": "A silver-colored metal wristwatch with an integrated link bracelet and a deep azure blue dial with a horizontal striped texture.",
+      "character": "A woman's hands with a neutral manicure and the cuff of an off-white sleeve.",
+      "setting": "A brightly lit bedroom with neutral-colored walls and a large white wardrobe.",
+      "voice": "A young adult female voice, calm and friendly, like sharing a recommendation with a friend."
+    }
+  },
+  "expect": {
+    "must_contain": [
+      "Carré Royale"
+    ]
+  }
+}

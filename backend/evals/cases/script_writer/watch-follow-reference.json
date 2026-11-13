@@ -1,0 +1,51 @@
+{
+  "about": "Follows a reference ad's structure. Must not reuse the reference's brand or wording.",
+  "input": {
+    "idea": "Ad for a female watch. It's a luxurious watch that looks expensive but is affordable.",
+    "target_words_per_scene": 12,
+    "product_name": "Carré Royale",
+    "context_image_descriptions": [
+      "silver watch with azure blue dial"
+    ],
+    "asset_bible": {
+      "hero_props": "A silver-colored metal wristwatch with an integrated link bracelet and a deep azure blue dial with a horizontal striped texture.",
+      "character": "A young woman in her early 20s. She wears a dark brown hijab and a long-sleeved, off-white ruched top.",
+      "setting": "A brightly lit bedroom with neutral-colored walls and a large white wardrobe.",
+      "voice": "A young adult female voice, calm and friendly, like sharing a recommendation with a friend."
+    },
+    "structure": {
+      "scenes": [
+        {
+          "purpose": "Introduces the product with a bold claim",
+          "happens": "A hand lifts the watch out of its box.",
+          "framing": "Top-down close-up"
+        },
+        {
+          "purpose": "Names what people expect of such a product",
+          "happens": "The watch is turned to show the dial, then the back.",
+          "framing": "Close-up"
+        },
+        {
+          "purpose": "Shows the value against the price",
+          "happens": "The watch rests alone on a cushion.",
+          "framing": "Top-down, slow zoom"
+        },
+        {
+          "purpose": "Makes the offer",
+          "happens": "A second identical watch is placed next to the first.",
+          "framing": "Close-up on the hand"
+        }
+      ],
+      "pacing": "A new shot every four to five seconds.",
+      "call_to_action": "Ends on the product with the offer."
+    }
+  },
+  "expect": {
+    "must_contain": [
+      "Carré Royale"
+    ],
+    "must_not_contain": [
+      "Rolex"
+    ]
+  }
+}

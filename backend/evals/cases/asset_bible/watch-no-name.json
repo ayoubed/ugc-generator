@@ -1,0 +1,7 @@
+{
+  "about": "Text only, no product name: the product must not get a made-up brand.",
+  "input": {
+    "idea": "Ad for a female watch. It's a luxurious watch that looks expensive but is affordable."
+  },
+  "expect": {}
+}

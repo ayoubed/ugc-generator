@@ -57,6 +57,28 @@ both suites, lint and the build on every push to `main` and on pull requests.
 app calls `GET /api/me`: an account on the list gets an `allowed` mark on its sign-in token, which
 the database and file rules require; any other account sees a no-access screen.
 
+## Prompts: where they are and how to try a change
+
+Every instruction the app sends to a model is a text file in `backend/app/prompts/`, one per
+prompt (`script_writer.md`, `take_check.md`, `video.realism.md`...). Lines starting with `#!` are
+notes for people; `{{name}}` is a blank the code fills in. Changing a prompt is editing its file.
+
+Before changing one, see what it does on the saved cases in `backend/evals/cases/`:
+
+```bash
+cd backend
+../venv/bin/python -m evals.run --list                              # targets, cases, prompt files
+../venv/bin/python -m evals.run script_writer --dry-run             # the exact prompts, no model call
+../venv/bin/python -m evals.run script_writer                       # run the live prompt on every case
+../venv/bin/python -m evals.run script_writer --variant new.md      # live wording against yours
+../venv/bin/python -m evals.run script_writer --variant new.md --prompt script_writer.product_led
+```
+
+A run prints which automatic checks passed for each case (scene count, script length, no made-up
+names, no face in a product-led script...) and saves every output to `backend/evals/runs/`, so two
+wordings can be read side by side. The checks only catch mistakes a rule can catch; read the
+outputs too. A new failure worth remembering becomes a new case file. Real runs call the model.
+
 ## One voice and exact captions (ElevenLabs, optional)
 
 Set `ELEVENLABS_API_KEY` on the backend (in `backend/.env` locally, as an environment variable on
