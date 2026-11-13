@@ -102,7 +102,28 @@ def fit_words_to_clip(words: List[Word], trim_start: float, duration: float) -> 
         if b - a < 0.04:
             b = min(duration, a + 0.08)
         fitted.append((text, round(a, 3), round(b, 3)))
-    return fitted
+    return close_small_gaps(fitted)
+
+
+# A silence between two words up to this long is breathing, not a pause: the word stays lit through it.
+# (chunk_words starts a new line at a longer pause.)
+MAX_GAP_INSIDE_PHRASE = 0.3
+
+
+def close_small_gaps(words: List[Word]) -> List[Word]:
+    """
+    Measured word times leave short silences between words (and can make a word like "I" a
+    millisecond long). Each word is held until the next one starts, unless a real pause follows,
+    so the highlight moves from word to word without flickering off in between.
+    """
+    closed: List[Word] = []
+    for i, (text, start, end) in enumerate(words):
+        if i + 1 < len(words):
+            next_start = words[i + 1][1]
+            if 0 < next_start - end <= MAX_GAP_INSIDE_PHRASE:
+                end = next_start
+        closed.append((text, start, end))
+    return closed
 
 
 def chunk_words(words: List[Word], max_words: int, max_chars: int) -> List[List[Word]]:

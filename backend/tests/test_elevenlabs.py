@@ -3,7 +3,7 @@ import httpx
 import pytest
 
 from app import elevenlabs, jobs, voiceover
-from app.captions import fit_words_to_clip
+from app.captions import close_small_gaps, fit_words_to_clip
 from app.elevenlabs import VoiceServiceError, simplify_voice, words_from_alignment
 from app.voiceover import caption_word_times, project_voice, revoiced_scene, saved_alignment, voice_cache_path
 
@@ -127,7 +127,21 @@ def test_aligning_sends_the_text_with_the_audio(tmp_path, monkeypatch):
 
 def test_exact_word_times_follow_the_trim():
     words = [("cut", 0.0, 0.2), ("Hello", 0.4, 0.8), ("there", 0.9, 1.6), ("gone", 2.2, 2.5)]
-    assert fit_words_to_clip(words, trim_start=0.3, duration=1.2) == [("Hello", 0.1, 0.5), ("there", 0.6, 1.2)]
+    assert fit_words_to_clip(words, trim_start=0.3, duration=1.2) == [("Hello", 0.1, 0.6), ("there", 0.6, 1.2)]
+
+
+def test_a_word_stays_lit_until_the_next_one_unless_a_real_pause_follows():
+    # Times as the service really returns them: short silences between words, "I" one millisecond long.
+    measured = [("Okay,", 0.86, 1.08), ("I", 1.28, 1.281), ("have", 1.34, 1.54), ("to", 1.58, 1.68), ("Stop.", 2.4, 2.7)]
+    assert close_small_gaps(measured) == [
+        ("Okay,", 0.86, 1.28), ("I", 1.28, 1.34), ("have", 1.34, 1.58), ("to", 1.58, 1.68), ("Stop.", 2.4, 2.7),
+    ]
+
+
+def test_the_service_returns_the_spaces_between_words_and_they_are_dropped():
+    data = {"words": [{"text": "Okay,", "start": 0.86, "end": 1.08, "loss": 0.5}, {"text": " ", "start": 1.08, "end": 1.24, "loss": 0.9},
+                      {"text": "I", "start": 1.28, "end": 1.281, "loss": 0.6}]}
+    assert words_from_alignment(data, "Okay, I") == [("Okay,", 0.86, 1.08), ("I", 1.28, 1.281)]
 
 
 def test_a_word_on_the_edge_stays_visible_for_a_moment():
