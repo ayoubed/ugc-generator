@@ -38,6 +38,7 @@ import {
   sceneChangesSinceTake,
   sceneHasVideo,
   sceneStatus,
+  scenesToRemake,
   sceneAlternatives,
   sceneLabels,
   sceneSlot,
@@ -113,6 +114,7 @@ function GenerateVideos({ projectId: id }) {
   const [runRequesting, setRunRequesting] = useState(false);
   const [runError, setRunError] = useState('');
   const [stitchWhenDone, setStitchWhenDone] = useState(true);
+  const [remakeChanged, setRemakeChanged] = useState(true); // with the missing scenes, also the edited ones
   const [retakeFlagged, setRetakeFlagged] = useState(false); // off by default: it can cost an extra take per scene
 
   useDoneNotifications(project, scenes);
@@ -312,7 +314,7 @@ function GenerateVideos({ projectId: id }) {
   };
 
   /** Makes every missing scene in order on the server, and stitches at the end when asked. */
-  const handleGenerateAll = async () => {
+  const handleGenerateAll = async (remake = []) => {
     setRunError('');
     askToNotify();
     setRunRequesting(true);
@@ -323,7 +325,7 @@ function GenerateVideos({ projectId: id }) {
         setRunError("Couldn't save your latest prompt edits, so nothing was started. Check your connection and try again.");
         return;
       }
-      await generateAllScenes(id, { stitch: stitchWhenDone, retake: retakeFlagged });
+      await generateAllScenes(id, { stitch: stitchWhenDone, retake: retakeFlagged, remake });
     } catch (err) {
       console.error('Could not start generating all scenes:', err);
       setRunError(friendlyError(err));
@@ -412,8 +414,20 @@ function GenerateVideos({ projectId: id }) {
   const runHeard = toMillis(run?.updatedAt);
   const runActive = ['running', 'stitching'].includes(run?.status)
     && (busyNumbers.length > 0 || stitching || (Boolean(runHeard) && now - runHeard < 2 * 60 * 1000));
-  const runFailed = run?.status === 'failed' && !runActive && missingNumbers.length > 0 ? run.error || 'Generating stopped.' : '';
-  const canGenerateAll = !runActive && missingNumbers.length > 0 && busyNumbers.length === 0 && !stitching;
+  const runFailed = run?.status === 'failed' && !runActive && (missingNumbers.length > 0 || (run.remake || []).length > 0)
+    ? run.error || 'Generating stopped.' : '';
+  const idle = !runActive && busyNumbers.length === 0 && !stitching;
+  const canGenerateAll = idle && missingNumbers.length > 0;
+  // New takes of scenes that already have one: the ones edited since their take, or all of them.
+  const changedIds = scenesToRemake(mergedScenes, project, 'changed');
+  const allIds = scenesToRemake(mergedScenes, project, 'all');
+  const canRemake = idle && allIds.length > 0;
+  const plural = (count, one, many) => (count === 1 ? one : many);
+  const handleRemakeAll = () => {
+    const question = `Make a new take of ${allIds.length === 1 ? 'the scene' : `all ${allIds.length} scenes`}? `
+      + `That is ${allIds.length} new ${plural(allIds.length, 'take', 'takes')}. The takes you have now are kept.`;
+    if (window.confirm(question)) handleGenerateAll(allIds);
+  };
 
   let overviewSub = 'Generate each scene. A scene that continues from the one before it needs that scene finished first.';
   if (busyNumbers.length) {
@@ -599,7 +613,7 @@ function GenerateVideos({ projectId: id }) {
                 })}
               </ol>
 
-              {(runActive || canGenerateAll || runError) && (
+              {(runActive || canGenerateAll || canRemake || runError) && (
                 <div className="gen-run" role="region" aria-label="Generate all scenes">
                   {runActive ? (
                     <>
@@ -626,6 +640,17 @@ function GenerateVideos({ projectId: id }) {
                             : `${missingNumbers.length} scenes still need a video. They are made one after another, and you can leave this page.`}
                         </p>
                         {runFailed && <p className="gen-note is-error" role="alert">{runFailed}</p>}
+                        {changedIds.length > 0 && (
+                          <label className="gen-run-option" htmlFor="gen-remake-changed">
+                            <input
+                              type="checkbox"
+                              id="gen-remake-changed"
+                              checked={remakeChanged}
+                              onChange={(e) => setRemakeChanged(e.target.checked)}
+                            />
+                            Also make a new take of the {changedIds.length} {plural(changedIds.length, 'scene', 'scenes')} that changed since {plural(changedIds.length, 'its', 'their')} take
+                          </label>
+                        )}
                         <label className="gen-run-option" htmlFor="gen-stitch-when-done">
                           <input
                             type="checkbox"
@@ -645,9 +670,72 @@ function GenerateVideos({ projectId: id }) {
                           Make one more take when the automatic check finds a problem (costs an extra take)
                         </label>
                       </div>
-                      <button type="button" id="gen-generate-all" className="btn btn-primary" onClick={handleGenerateAll} disabled={runRequesting}>
-                        {runRequesting ? <LoadingSpinner size="sm" label="Starting…" /> : missingNumbers.length === 1 ? 'Generate it' : `Generate all ${missingNumbers.length}`}
+                      <button
+                        type="button"
+                        id="gen-generate-all"
+                        className="btn btn-primary"
+                        onClick={() => handleGenerateAll(remakeChanged ? changedIds : [])}
+                        disabled={runRequesting}
+                      >
+                        {runRequesting
+                          ? <LoadingSpinner size="sm" label="Starting…" />
+                          : missingNumbers.length === 1 && !(remakeChanged && changedIds.length)
+                            ? 'Generate it'
+                            : `Generate all ${missingNumbers.length + (remakeChanged ? changedIds.length : 0)}`}
                       </button>
+                    </>
+                  ) : canRemake ? (
+                    <>
+                      <div className="gen-run-text">
+                        {changedIds.length > 0 && (
+                          <p className="gen-run-status">
+                            {`${changedIds.length} ${plural(changedIds.length, 'scene', 'scenes')} changed since ${plural(changedIds.length, 'its', 'their')} take (the script, the details or a picture), or ${plural(changedIds.length, 'continues', 'continue')} from one that did.`}
+                          </p>
+                        )}
+                        {runFailed && <p className="gen-note is-error" role="alert">{runFailed}</p>}
+                        {changedIds.length > 0 && (
+                          <>
+                            <label className="gen-run-option" htmlFor="gen-stitch-when-done">
+                              <input
+                                type="checkbox"
+                                id="gen-stitch-when-done"
+                                checked={stitchWhenDone}
+                                onChange={(e) => setStitchWhenDone(e.target.checked)}
+                              />
+                              Stitch the final video when they are done
+                            </label>
+                            <label className="gen-run-option" htmlFor="gen-retake-flagged">
+                              <input
+                                type="checkbox"
+                                id="gen-retake-flagged"
+                                checked={retakeFlagged}
+                                onChange={(e) => setRetakeFlagged(e.target.checked)}
+                              />
+                              Make one more take when the automatic check finds a problem (costs an extra take)
+                            </label>
+                          </>
+                        )}
+                      </div>
+                      <div className="gen-run-actions">
+                        {changedIds.length > 0 && (
+                          <button
+                            type="button"
+                            id="gen-remake-changed-button"
+                            className="btn btn-primary"
+                            onClick={() => handleGenerateAll(changedIds)}
+                            disabled={runRequesting}
+                          >
+                            {runRequesting
+                              ? <LoadingSpinner size="sm" label="Starting…" />
+                              : `Make ${changedIds.length} new ${plural(changedIds.length, 'take', 'takes')}`}
+                          </button>
+                        )}
+                        {allIds.length > changedIds.length && (
+                          <button type="button" id="gen-remake-all" className="btn btn-ghost btn-sm" onClick={handleRemakeAll} disabled={runRequesting}>
+                            New takes of all {allIds.length} scenes
+                          </button>
+                        )}
+                      </div>
                     </>
                   ) : null}
                   {runError && <p className="gen-note is-error" role="alert">{runError}</p>}

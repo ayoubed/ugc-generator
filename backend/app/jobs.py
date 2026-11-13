@@ -1121,11 +1121,33 @@ def starting_source_for(scene_data: Dict[str, Any], is_first: bool) -> str:
     return source
 
 
-async def run_generate_all(uid: str, project_id: str, stitch: bool = False, retake: bool = False) -> None:
-    await asyncio.to_thread(_run_generate_all_sync, uid, project_id, stitch, retake)
+def scenes_to_remake(scenes: List[tuple], wanted: Any) -> List[str]:
+    """
+    Of the scene ids asked for, the ones a run can make a new take of: in the video and with a
+    video already (a scene without one is made anyway). Kept in video order.
+    """
+    asked = {str(scene_id) for scene_id in (wanted or [])}
+    return [
+        scene_id for _, scene_id, data in scenes
+        if scene_id in asked and not is_scene_skipped(data) and data.get("storageRef")
+    ]
 
 
-def _run_generate_all_sync(uid: str, project_id: str, stitch: bool, retake: bool = False) -> None:
+async def run_generate_all(
+    uid: str, project_id: str, stitch: bool = False, retake: bool = False, remake: Optional[List[str]] = None
+) -> None:
+    await asyncio.to_thread(_run_generate_all_sync, uid, project_id, stitch, retake, remake)
+
+
+def _run_generate_all_sync(
+    uid: str, project_id: str, stitch: bool, retake: bool = False, remake: Optional[List[str]] = None
+) -> None:
+    """
+    Makes a take for every scene without a video, in video order, and a NEW take for the scenes
+    in `remake` (ids) although they have one: after the script or the details changed. The takes
+    those scenes already have are kept; the new one becomes the take in use.
+    """
+    remake_left = {str(scene_id) for scene_id in (remake or [])}
     db = firestore.client()
     project_ref = db.collection("projects").document(project_id)
 
@@ -1153,7 +1175,9 @@ def _run_generate_all_sync(uid: str, project_id: str, stitch: bool, retake: bool
             if not scene_snap.exists:
                 continue
             scene_data = scene_snap.to_dict() or {}
-            if is_scene_skipped(scene_data) or scene_data.get("storageRef"):
+            remaking = scene_id in remake_left
+            remake_left.discard(scene_id)
+            if is_scene_skipped(scene_data) or (scene_data.get("storageRef") and not remaking):
                 continue
             if scene_data.get("videoStatus") in ("queued", "generating") and not is_stale_job(scene_data):
                 raise ValueError(f"Scene {number} is already making a take. Wait for it, then start again.")
@@ -1221,6 +1245,17 @@ def _run_generate_all_sync(uid: str, project_id: str, stitch: bool, retake: bool
                 )
 
                 after = scene_ref.get().to_dict() or {}
+                if remaking and round_number == 0 and after.get("storageRef") and after.get("activeAttempt") != attempt:
+                    # The scene still shows its earlier take: the new one failed or was cancelled.
+                    # Going on would let the next scenes continue from a take that was meant to be replaced.
+                    failed = after.get("failedAttempt") == attempt or bool(after.get("errorMessage"))
+                    if cancelled() or not failed:
+                        set_state(status="cancelled", current=None, currentNumber=None, retaking=False)
+                        return
+                    raise ValueError(
+                        f"The new take of scene {number} failed: {after.get('errorMessage') or 'no video came back'} "
+                        "Its earlier take is still in use."
+                    )
                 if not after.get("storageRef"):
                     if cancelled():
                         set_state(status="cancelled", current=None, currentNumber=None, retaking=False)

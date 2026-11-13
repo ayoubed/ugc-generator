@@ -67,21 +67,21 @@ describe('Generate step: generating every scene at once', () => {
     expect(run.getByLabelText(/Make one more take when the automatic check finds a problem/).checked).toBe(false);
 
     await userEvent.click(run.getByRole('button', { name: 'Generate all 2' }));
-    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: false });
+    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: false, remake: [] });
   });
 
   it('sends the retake choice when its box is ticked', async () => {
     const { run } = open();
     await userEvent.click(run.getByLabelText(/Make one more take when the automatic check finds a problem/));
     await userEvent.click(run.getByRole('button', { name: 'Generate all 2' }));
-    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: true });
+    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: true, remake: [] });
   });
 
   it('does not stitch at the end when that box is cleared', async () => {
     const { run } = open();
     await userEvent.click(run.getByLabelText('Stitch the final video when they are done'));
     await userEvent.click(run.getByRole('button', { name: 'Generate all 2' }));
-    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: false, retake: false });
+    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: false, retake: false, remake: [] });
   });
 
   it('names the scene when only one is missing', () => {
@@ -98,9 +98,9 @@ describe('Generate step: generating every scene at once', () => {
     expect(run.getByRole('button', { name: 'Generate all 2' }).disabled).toBe(false);
   });
 
-  it('is not offered once every scene has a video', () => {
+  it('offers no "generate" once every scene has a video', () => {
     const { run } = open({ scenes: [done('0'), done('1')] });
-    expect(run).toBeNull();
+    expect(run.queryByRole('button', { name: /^Generate/ })).toBeNull();
   });
 });
 
@@ -165,5 +165,77 @@ describe('Generate step: nothing to show', () => {
     open();
     expect(screen.getByText('Scene card 1')).toBeTruthy();
     expect(screen.getByText('Scene card 2')).toBeTruthy();
+  });
+});
+
+describe('Generate step: new takes of scenes that already have one', () => {
+  // A take records the prompt it was made from; a different prompt now means the scene changed.
+  const taken = (id, extra = {}) => done(id, { history: [{ attempt: 1, scenePrompt: `Prompt ${id}.`, sceneAudio: 'voice_only' }], ...extra });
+  const edited = (id, extra = {}) => taken(id, { prompt: `A rewritten prompt ${id}.`, ...extra });
+
+  beforeEach(() => {
+    window.confirm = vi.fn(() => true);
+  });
+
+  it('offers new takes of the scenes that changed, and sends exactly those', async () => {
+    const { run } = open({ scenes: [taken('0'), edited('1'), taken('2', { imageSource: 'creator' })] });
+    expect(run.getByText(/1 scene changed since its take/)).toBeTruthy();
+    await userEvent.click(run.getByRole('button', { name: 'Make 1 new take' }));
+    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: false, remake: ['1'] });
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it('includes a scene that continues from one that changed, so the cut still matches', async () => {
+    const { run } = open({ scenes: [edited('0'), taken('1', { imageSource: 'last_frame' }), taken('2', { imageSource: 'creator' })] });
+    expect(run.getByText(/2 scenes changed since their take .* or continue from one that did/)).toBeTruthy();
+    await userEvent.click(run.getByRole('button', { name: 'Make 2 new takes' }));
+    expect(generateAllScenes.mock.calls[0][1].remake).toEqual(['0', '1']);
+  });
+
+  it('after the whole script was rewritten, one button remakes every scene', async () => {
+    const { run } = open({ scenes: [edited('0'), edited('1'), edited('2')] });
+    await userEvent.click(run.getByRole('button', { name: 'Make 3 new takes' }));
+    expect(generateAllScenes.mock.calls[0][1].remake).toEqual(['0', '1', '2']);
+    expect(run.queryByRole('button', { name: /New takes of all/ })).toBeNull();   // it would be the same thing
+  });
+
+  it('can remake all scenes when nothing changed, after asking', async () => {
+    const { run } = open({ scenes: [taken('0'), taken('1'), taken('2', { skipped: true })] });
+    expect(run.queryByText(/changed since/)).toBeNull();
+    await userEvent.click(run.getByRole('button', { name: 'New takes of all 2 scenes' }));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('That is 2 new takes. The takes you have now are kept.'));
+    expect(generateAllScenes).toHaveBeenCalledWith('p1', { stitch: true, retake: false, remake: ['0', '1'] });
+  });
+
+  it('does nothing when the question is declined', async () => {
+    window.confirm = vi.fn(() => false);
+    const { run } = open({ scenes: [taken('0'), taken('1')] });
+    await userEvent.click(run.getByRole('button', { name: 'New takes of all 2 scenes' }));
+    expect(generateAllScenes).not.toHaveBeenCalled();
+  });
+
+  it('adds the changed scenes to a run that makes the missing ones, unless unticked', async () => {
+    const { run } = open({ scenes: [edited('0'), scene('1', { imageSource: 'creator' })] });
+    const also = run.getByLabelText(/Also make a new take of the 1 scene that changed since its take/);
+    expect(also.checked).toBe(true);
+    await userEvent.click(run.getByRole('button', { name: 'Generate all 2' }));
+    expect(generateAllScenes.mock.calls[0][1].remake).toEqual(['0']);
+
+    await userEvent.click(also);
+    await userEvent.click(run.getByRole('button', { name: 'Generate it' }));
+    expect(generateAllScenes.mock.calls[1][1].remake).toEqual([]);
+  });
+
+  it('is not offered while a scene is making a take', () => {
+    const { run } = open({ scenes: [edited('0'), taken('1', { videoStatus: 'generating', updatedAt: Date.now() })] });
+    expect(run).toBeNull();
+  });
+
+  it('shows why the last run of new takes stopped', () => {
+    const { run } = open({
+      project: { generateAll: { status: 'failed', remake: ['1'], error: 'The new take of scene 2 failed: busy. Its earlier take is still in use.' } },
+      scenes: [taken('0'), edited('1')],
+    });
+    expect(run.getByRole('alert').textContent).toMatch(/The new take of scene 2 failed/);
   });
 });

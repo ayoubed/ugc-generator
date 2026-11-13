@@ -277,3 +277,24 @@ def test_generate_all_passes_the_retake_option_on(api):
     api.db.store["projects/p1"]["generateAll"] = {}
     api.post("/api/projects/p1/generate-all")
     assert api.db.store["projects/p1"]["generateAll"]["retake"] is False
+
+
+def test_generate_all_can_remake_scenes_that_already_have_a_video(api):
+    project(api)
+    scene(api, "0", storageRef="done.mp4")
+    scene(api, "1", storageRef="done.mp4")
+    scene(api, "2", storageRef="done.mp4", skipped=True)
+    response = api.post("/api/projects/p1/generate-all", json={"remake": ["1", "2", "9"]})
+    assert response.status_code == 202
+    assert response.json()["scenes"] == 1                      # the skipped and the unknown one are left out
+    state = api.db.store["projects/p1"]["generateAll"]
+    assert (state["total"], state["remake"]) == (1, ["1"])
+    assert api.started == ["run_generate_all"]
+
+
+def test_generate_all_counts_missing_and_remade_scenes_together(api):
+    project(api)
+    scene(api, "0", storageRef="done.mp4")
+    scene(api, "1")
+    response = api.post("/api/projects/p1/generate-all", json={"remake": ["0"]})
+    assert response.json()["scenes"] == 2

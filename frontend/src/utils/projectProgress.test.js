@@ -6,6 +6,7 @@ import {
   effectiveImageSource,
   finalVideoChangeReason,
   projectVoice,
+  scenesToRemake,
   formatElapsed,
   formatSceneList,
   isStitchStuck,
@@ -189,5 +190,38 @@ describe('small helpers', () => {
     expect(formatElapsed(75.9)).toBe('1:15');
     expect(toMillis({ toMillis: () => 5 })).toBe(5);
     expect(toMillis('not a date')).toBeNull();
+  });
+});
+
+describe('which scenes get a new take', () => {
+  const take = (id, extra = {}) => ({ id, prompt: `P${id}`, storageRef: `${id}.mp4`, activeAttempt: 1, history: [{ attempt: 1, scenePrompt: `P${id}` }], ...extra });
+
+  it('picks nothing when every take matches its scene', () => {
+    expect(scenesToRemake([take('0'), take('1', { imageSource: 'last_frame' })])).toEqual([]);
+  });
+
+  it('picks edited scenes and the ones that continue from them, in order', () => {
+    const scenes = [take('0', { prompt: 'new' }), take('1', { imageSource: 'last_frame' }), take('2', { imageSource: 'extend' }), take('3', { imageSource: 'creator' })];
+    expect(scenesToRemake(scenes)).toEqual(['0', '1', '2']);
+  });
+
+  it('also picks a scene that continues from one that has no video yet', () => {
+    expect(scenesToRemake([{ id: '0', prompt: 'P0' }, take('1', { imageSource: 'last_frame' })])).toEqual(['1']);
+  });
+
+  it('leaves skipped scenes out, and looks through them for the scene before', () => {
+    const scenes = [take('0', { prompt: 'new' }), take('1', { skipped: true, prompt: 'new' }), take('2', { imageSource: 'last_frame' })];
+    expect(scenesToRemake(scenes)).toEqual(['0', '2']);
+  });
+
+  it('catches a change of the consistent details through the project', () => {
+    const scene = take('0', { history: [{ attempt: 1, scenePrompt: 'P0', sceneAudio: 'voice_only', assetBible: { character: 'A blonde woman.' } }] });
+    const project = { settings: { assetBible: { character: 'A woman in a brown headscarf.' } } };
+    expect(scenesToRemake([scene], project)).toEqual(['0']);
+    expect(scenesToRemake([scene], { settings: { assetBible: { character: 'A blonde woman.' } } })).toEqual([]);
+  });
+
+  it('picks every scene with a video when asked for all', () => {
+    expect(scenesToRemake([take('0'), { id: '1' }, take('2', { skipped: true }), take('3')], null, 'all')).toEqual(['0', '3']);
   });
 });

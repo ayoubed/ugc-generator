@@ -180,6 +180,33 @@ export function sceneChangesSinceTake(scene, isFirst, project = null) {
 }
 
 /**
+ * The scenes (ids, in video order) a run should make a new take of although they have a video.
+ * mode 'changed': the scenes edited since their take (script, details, pictures...), plus every
+ * scene that continues from one that is about to get a new take, so the cuts still match.
+ * mode 'all': every scene in the video that has a video.
+ */
+export function scenesToRemake(scenes, project = null, mode = 'changed') {
+  const list = scenes || [];
+  const replaced = new Set(); // scenes whose take in use will be a new one after the run
+  const remake = [];
+  list.forEach((scene, idx) => {
+    if (isSceneSkipped(scene)) return;
+    const previous = previousIncludedScene(list, idx);
+    const isFirst = !previous;
+    if (!sceneHasVideo(scene)) {
+      replaced.add(scene.id); // the run makes it anyway
+      return;
+    }
+    const follows = FROM_PREVIOUS_SOURCES.includes(effectiveImageSource(scene, isFirst)) && replaced.has(previous?.scene?.id);
+    if (mode === 'all' || follows || sceneChangesSinceTake(scene, isFirst, project).length > 0) {
+      remake.push(scene.id);
+      replaced.add(scene.id);
+    }
+  });
+  return remake;
+}
+
+/**
  * When the current take continued from a take of the previous scene that is no longer the one in use,
  * the cut between the two scenes may not match. Returns a short explanation, or ''.
  */

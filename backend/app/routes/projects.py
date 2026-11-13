@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from firebase_admin import firestore
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
 from app.jobs import (
@@ -17,6 +17,7 @@ from app.jobs import (
     scene_order,
     scenes_needing_video,
     spawn_background,
+    scenes_to_remake,
 )
 from app.storage import copy_file, delete_prefix
 
@@ -40,6 +41,8 @@ class GenerateAllRequest(BaseModel):
     stitch: bool = False
     # Make one more take of a scene when the automatic check flags its first take.
     retake: bool = False
+    # Scenes (ids) to make a NEW take of although they have a video, e.g. after the script changed.
+    remake: List[str] = Field(default_factory=list, max_length=50)
 
 
 @router.post("/projects/{pid}/generate-all", status_code=status.HTTP_202_ACCEPTED)
@@ -50,6 +53,7 @@ def generate_all_endpoint(
 ):
     """
     Makes a take for every scene that has no video yet, one after another, in the background.
+    Scenes listed in `remake` get a new take although they have a video (their takes are kept).
     With stitch=true the final video is stitched when the last scene is done. With retake=true a
     scene whose first take is flagged by the automatic check gets one more take. Progress is in
     project.generateAll; the run stops at the first scene that fails.
@@ -71,8 +75,9 @@ def generate_all_endpoint(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Scene {busy[0]} is making a take. Wait for it to finish or cancel it, then generate the rest.",
         )
+    remake = scenes_to_remake(scenes, request.remake if request else [])
     todo = scenes_needing_video(project_ref)
-    if not todo:
+    if not todo and not remake:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Every scene in the video already has a video.")
 
     project_ref.update({
@@ -81,7 +86,8 @@ def generate_all_endpoint(
             "stitch": stitch,
             "retake": retake,
             "retaking": False,
-            "total": len(todo),
+            "total": len(todo) + len(remake),
+            "remake": remake,
             "current": None,
             "currentNumber": None,
             "error": None,
@@ -91,14 +97,14 @@ def generate_all_endpoint(
         },
     })
     try:
-        spawn_background(run_generate_all(uid=uid, project_id=pid, stitch=stitch, retake=retake))
+        spawn_background(run_generate_all(uid=uid, project_id=pid, stitch=stitch, retake=retake, remake=remake))
     except Exception:
         # Never leave the project marked as running when nothing is running.
         project_ref.update({"generateAll.status": "failed", "generateAll.error": "Could not start. Try again."})
         raise
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        content={"project_id": pid, "status": "running", "scenes": len(todo), "message": "Generating the scenes."},
+        content={"project_id": pid, "status": "running", "scenes": len(todo) + len(remake), "message": "Generating the scenes."},
     )
 
 

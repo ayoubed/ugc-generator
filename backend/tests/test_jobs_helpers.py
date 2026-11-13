@@ -162,3 +162,68 @@ def test_generate_all_stops_at_a_scene_that_fails_outright(fake_db, monkeypatch)
     state = run_all(fake_db, monkeypatch, takes, retake=True)
     assert takes.made == [(0, 1)]
     assert state["status"] == "failed" and "Scene 1 failed" in state["error"]
+
+
+# --- new takes of scenes that already have a video ----------------------------------------------
+
+def remake_project(fake_db):
+    fake_db.store["projects/p1"] = {"userId": "u1", "startingImageRef": "creator.png", "settings": {}, "generateAll": {}}
+    for index in range(3):
+        fake_db.store[f"projects/p1/scenes/{index}"] = {
+            "prompt": f"Line {index}", "attempt": 1, "activeAttempt": 1, "storageRef": "take1.mp4",
+            "videoStatus": "completed", **({"imageSource": "last_frame"} if index else {}),
+        }
+
+
+def test_only_scenes_that_have_a_video_and_are_in_the_video_can_be_remade():
+    scenes = [("1", "0", {"storageRef": "a.mp4"}), ("2", "1", {}), ("3", "2", {"storageRef": "c.mp4", "skipped": True}),
+              ("4", "3", {"storageRef": "d.mp4"})]
+    assert jobs.scenes_to_remake(scenes, ["3", "0", "1", "2", "nope"]) == ["0", "3"]
+    assert jobs.scenes_to_remake(scenes, None) == []
+
+
+def test_a_run_makes_new_takes_of_the_chosen_scenes_and_leaves_the_others(fake_db, monkeypatch):
+    remake_project(fake_db)
+    takes = FakeTakes(fake_db, [True, True])
+    monkeypatch.setattr(jobs, "_run_video_generation_job_sync", takes)
+    jobs._run_generate_all_sync("u1", "p1", stitch=False, retake=False, remake=["0", "2"])
+    assert takes.made == [(0, 2), (2, 2)]
+    assert fake_db.store["projects/p1/scenes/0"]["activeAttempt"] == 2
+    assert fake_db.store["projects/p1/scenes/1"]["activeAttempt"] == 1      # not asked for: untouched
+    assert fake_db.store["projects/p1"]["generateAll"]["status"] == "done"
+
+
+def test_a_run_makes_missing_scenes_and_remakes_together_in_video_order(fake_db, monkeypatch):
+    remake_project(fake_db)
+    fake_db.store["projects/p1/scenes/1"] = {"prompt": "Line 1", "attempt": 0, "imageSource": "last_frame"}
+    takes = FakeTakes(fake_db, [True, True])
+    monkeypatch.setattr(jobs, "_run_video_generation_job_sync", takes)
+    jobs._run_generate_all_sync("u1", "p1", stitch=False, retake=False, remake=["0"])
+    assert takes.made == [(0, 2), (1, 1)]
+
+
+def test_a_new_take_that_fails_stops_the_run_and_keeps_the_earlier_take(fake_db, monkeypatch):
+    remake_project(fake_db)
+
+    def failing(uid, project_id, scene_index, source, _file, _settings, attempt):
+        fake_db.store[f"projects/{project_id}/scenes/{scene_index}"].update(
+            {"videoStatus": "completed", "failedAttempt": attempt, "errorMessage": "The model is busy."})
+
+    monkeypatch.setattr(jobs, "_run_video_generation_job_sync", failing)
+    jobs._run_generate_all_sync("u1", "p1", stitch=False, retake=False, remake=["0", "1"])
+    state = fake_db.store["projects/p1"]["generateAll"]
+    assert state["status"] == "failed"
+    assert "The new take of scene 1 failed: The model is busy." in state["error"]
+    assert "earlier take is still in use" in state["error"]
+    assert fake_db.store["projects/p1/scenes/0"]["storageRef"] == "take1.mp4"
+    assert fake_db.store["projects/p1/scenes/1"]["attempt"] == 1            # the run did not go on
+
+
+def test_a_new_take_cancelled_on_the_scene_stops_the_run_quietly(fake_db, monkeypatch):
+    remake_project(fake_db)
+    monkeypatch.setattr(jobs, "_run_video_generation_job_sync",
+                        lambda uid, pid, index, *rest: fake_db.store[f"projects/{pid}/scenes/{index}"].update({"videoStatus": "completed"}))
+    jobs._run_generate_all_sync("u1", "p1", stitch=False, retake=False, remake=["0", "1"])
+    state = fake_db.store["projects/p1"]["generateAll"]
+    assert state["status"] == "cancelled"
+    assert fake_db.store["projects/p1/scenes/1"]["attempt"] == 1

@@ -298,8 +298,9 @@ async function callApi(path, { method = 'POST', body, fallback = 'Request failed
  * With stitch=true the final video is stitched when the last scene is done; with retake=true a
  * scene whose first take is flagged by the automatic check gets one more take.
  */
-export function generateAllScenes(projectId, { stitch = false, retake = false } = {}) {
-  return callApi(`/api/projects/${projectId}/generate-all`, { body: { stitch, retake }, fallback: 'Could not start generating' });
+export function generateAllScenes(projectId, { stitch = false, retake = false, remake = [] } = {}) {
+  // remake: ids of scenes to make a NEW take of although they have a video.
+  return callApi(`/api/projects/${projectId}/generate-all`, { body: { stitch, retake, remake }, fallback: 'Could not start generating' });
 }
 
 /** Stop a generate-all run: cancels the take being made and starts no further scene. */
