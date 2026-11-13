@@ -115,6 +115,7 @@ class ExtractAssetsRequest(BaseModel):
     idea: str
     project_id: Optional[str] = None  # when given, the project's photo and pictures are looked at
     product_name: Optional[str] = Field(default=None, max_length=120)
+    video_type: Optional[str] = None   # "creator" (default) or "product"
     llm_model: Optional[str] = None  # None = the default script model
 
 
@@ -156,6 +157,7 @@ class GenerateScenesRequest(BaseModel):
     structure: Optional[ScriptStructure] = None
     # The product's real name. Empty = the script must not invent one.
     product_name: Optional[str] = Field(default=None, max_length=120)
+    video_type: Optional[str] = None   # "creator" (default) or "product"
 
     @model_validator(mode="before")
     @classmethod

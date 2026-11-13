@@ -49,6 +49,7 @@ def extract_assets_endpoint(
             llm_model=get_script_model(request.llm_model)["id"],
             pictures=pictures,
             product_name=request.product_name,
+            video_type=request.video_type,
         )
     except HTTPException:
         raise
@@ -70,7 +71,8 @@ def project_picture_specs(uid: str, project_data: Dict[str, Any]) -> List[Dict[s
     """
     specs: List[Dict[str, str]] = []
     creator = project_data.get("startingImageRef") or ""
-    if creator:
+    product_led = (project_data.get("settings") or {}).get("videoType") == "product"
+    if creator and not product_led:      # a product-led video shows no presenter
         specs.append({"storageRef": creator, "role": "speaker", "description": ""})
     for item in project_data.get("globalImages") or []:
         if isinstance(item, dict) and item.get("storageRef"):
@@ -196,6 +198,7 @@ def generate_scenes_endpoint(
             asset_bible=asset_bible_dict,
             structure=request.structure.model_dump() if request.structure else None,
             product_name=request.product_name,
+            video_type=request.video_type,
         )
     except Exception as e:
         logger.exception(f"Failed to generate scenes with Gemini: {e}")

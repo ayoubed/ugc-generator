@@ -27,6 +27,9 @@ from app.pipeline import (
     SCENE_AUDIO_VOICE_ONLY,
     MUSIC_VOLUMES,
     scene_speech_rule,
+    PRODUCT_LED_SCENE_RULE,
+    VIDEO_TYPE_PRODUCT,
+    video_type_of,
     ASSET_BIBLE_FIELDS,
     asset_bible_lines,
     GenerationCancelled,
@@ -275,6 +278,31 @@ def project_music(project_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
     return {**music, "volume": volume if named or number else "medium"}
 
 
+def is_product_led(project_data: Optional[Dict[str, Any]]) -> bool:
+    """A product-led video: the product on screen, a narrator who is never seen, no presenter."""
+    return video_type_of(((project_data or {}).get("settings") or {}).get("videoType")) == VIDEO_TYPE_PRODUCT
+
+
+def start_picture_ref(project_data: Optional[Dict[str, Any]]) -> str:
+    """
+    The picture a scene starts from when it starts "from the photo of Step 1": the creator photo,
+    or for a product-led video the first product picture (there is no presenter to start on).
+    """
+    data = project_data or {}
+    if not is_product_led(data):
+        return data.get("startingImageRef") or ""
+    for item in data.get("globalImages") or []:
+        if isinstance(item, dict) and item.get("storageRef"):
+            return item["storageRef"]
+    return ""
+
+
+def missing_start_picture_message(project_data: Optional[Dict[str, Any]]) -> str:
+    if is_product_led(project_data):
+        return "No product picture found. Add one on the Idea step, or choose another starting picture."
+    return "No creator photo found. Upload one in Step 1 or choose another starting picture."
+
+
 def scene_edits(project_data: Optional[Dict[str, Any]], scenes_list: List[tuple]) -> List[Optional[Dict[str, Any]]]:
     """
     The editor's changes for each scene of the video, in order (settings.edits.<scene id>), or None
@@ -404,6 +432,8 @@ def creator_reference_spec(
     creator photo already has it, and there must be room within the model's picture limit.
     """
     creator = project_data.get("startingImageRef") or ""
+    if is_product_led(project_data):
+        return None   # no presenter in a product-led video: a face reference would invite one
     if image_source not in FROM_PREVIOUS_SOURCES or not creator or used >= limit:
         return None
     _assert_owned_path(uid, creator, "creator photo")
@@ -413,7 +443,7 @@ def creator_reference_spec(
 def creator_photo_for_check(project_data: Dict[str, Any], uid: Optional[str], temp_dir: str) -> Optional[str]:
     """The creator photo on disk, for the automatic take check. None when there is none or it can't be loaded."""
     creator = project_data.get("startingImageRef") or ""
-    if not creator or (uid and not str(creator).startswith(f"users/{uid}/")):
+    if is_product_led(project_data) or not creator or (uid and not str(creator).startswith(f"users/{uid}/")):
         return None
     local_path = os.path.join(temp_dir, "creator_for_check" + (os.path.splitext(creator)[1].lower() or ".jpg"))
     try:
@@ -600,12 +630,12 @@ def _run_video_generation_job_sync(
                 legacy_upload = ""
 
             if image_source == "uploaded":
-                starting_ref = scene_data.get("customStartImageRef") or legacy_upload or project_data.get("startingImageRef")
+                starting_ref = scene_data.get("customStartImageRef") or legacy_upload or start_picture_ref(project_data)
             else:
-                starting_ref = project_data.get("startingImageRef")
+                starting_ref = start_picture_ref(project_data)
 
             if not starting_ref:
-                raise ValueError("No starting picture available: upload a creator photo in Step 1 or a custom picture for this scene.")
+                raise ValueError(missing_start_picture_message(project_data))
 
             _assert_owned_path(uid, starting_ref, "starting picture")
             download_file(starting_ref, starting_image_path)
@@ -714,6 +744,8 @@ def _run_video_generation_job_sync(
         speech_rule = scene_speech_rule(script)
         if speech_rule:
             prompt += "\n\n" + speech_rule
+        if is_product_led(project_data):
+            prompt += "\n\n" + PRODUCT_LED_SCENE_RULE
 
         local_output_video = os.path.join(temp_dir, f"scene_{scene_index}_generated.mp4")
         scene_audio = project_scene_audio(project_data)
@@ -1241,9 +1273,9 @@ def _run_generate_all_sync(
 
             prev_id, prev_data = find_previous_scene(project_ref, int(scene_id))
             source = starting_source_for(scene_data, is_first=prev_id is None)
-            if source == "creator" and not project_data.get("startingImageRef"):
-                raise ValueError(f"Scene {number} starts from the creator photo, but there is none. Add one in Step 1.")
-            if source == "uploaded" and not (scene_data.get("customStartImageRef") or project_data.get("startingImageRef")):
+            if source == "creator" and not start_picture_ref(project_data):
+                raise ValueError(f"Scene {number} has no picture to start from. {missing_start_picture_message(project_data)}")
+            if source == "uploaded" and not (scene_data.get("customStartImageRef") or start_picture_ref(project_data)):
                 raise ValueError(f"Scene {number} has no starting picture. Upload one, or add a creator photo in Step 1.")
             if source in FROM_PREVIOUS_SOURCES and not (prev_data or {}).get("storageRef"):
                 raise ValueError(f"Scene {number} continues from the scene before it, which has no video.")

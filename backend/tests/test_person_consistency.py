@@ -91,7 +91,7 @@ def test_the_endpoint_writes_the_details_from_the_projects_pictures(api, monkeyp
     downloaded, seen = [], {}
     monkeypatch.setattr(scenes_route, "download_file", lambda ref, path: downloaded.append(ref))
 
-    def fake_extract(idea, llm_model, pictures=None, product_name=None):
+    def fake_extract(idea, llm_model, pictures=None, product_name=None, video_type=None):
         seen["pictures"] = pictures
         return {"character": "As in the photo.", "hero_props": "", "setting": "", "voice": ""}
 
@@ -112,7 +112,7 @@ def test_a_picture_that_cannot_be_loaded_is_left_out(api, monkeypatch):
     seen = {}
     monkeypatch.setattr(scenes_route, "download_file", broken)
     monkeypatch.setattr(scenes_route, "extract_asset_bible",
-                        lambda idea, llm_model, pictures=None, product_name=None: seen.update(pictures=pictures, name=product_name) or {})
+                        lambda idea, llm_model, pictures=None, product_name=None, video_type=None: seen.update(pictures=pictures, name=product_name) or {})
     assert api.post("/api/extract-assets", json={"idea": "Ad", "project_id": "p1"}).status_code == 200
     assert seen["pictures"] == []
 
@@ -127,7 +127,7 @@ def test_the_endpoint_refuses_someone_elses_project(api, monkeypatch):
 def test_without_a_project_the_details_come_from_the_idea(api, monkeypatch):
     seen = {}
     monkeypatch.setattr(scenes_route, "extract_asset_bible",
-                        lambda idea, llm_model, pictures=None, product_name=None: seen.update(pictures=pictures, name=product_name) or {})
+                        lambda idea, llm_model, pictures=None, product_name=None, video_type=None: seen.update(pictures=pictures, name=product_name) or {})
     assert api.post("/api/extract-assets", json={"idea": "Ad", "product_name": "Luma"}).status_code == 200
     assert seen["pictures"] == []
     assert seen["name"] == "Luma"

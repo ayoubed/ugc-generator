@@ -149,6 +149,39 @@ def asset_bible_lines(asset_bible: Optional[Dict[str, Any]]) -> List[str]:
 MAX_DETAIL_PICTURES = 7
 
 
+# The two kinds of video. "creator": a person talks to the camera. "product": the product is shown
+# (hands, close-ups) while a narrator who is never seen talks over it.
+VIDEO_TYPE_CREATOR, VIDEO_TYPE_PRODUCT = "creator", "product"
+
+
+def video_type_of(value: Any) -> str:
+    return VIDEO_TYPE_PRODUCT if value == VIDEO_TYPE_PRODUCT else VIDEO_TYPE_CREATOR
+
+
+# Added to every scene's video prompt of a product-led video.
+PRODUCT_LED_SCENE_RULE = (
+    "This is a product-led ad: the product is the subject of every shot. No face is ever on screen: "
+    "at most hands, a wrist or a forearm using or holding the product, framed so the head is out of "
+    "the picture. The voice is a narrator who is never seen: nobody in the picture speaks, and no "
+    "lips move."
+)
+
+
+def product_led_script_rules(video_type: Any) -> str:
+    """What the script writer is told when the video is product-led ('' for a creator video)."""
+    if video_type_of(video_type) != VIDEO_TYPE_PRODUCT:
+        return ""
+    return """VIDEO TYPE: PRODUCT-LED, WITH A NARRATOR WHO IS NEVER SEEN.
+    - Every scene is a shot of the product: in the hand, on the wrist, on a surface, a close-up of a
+      detail, being opened, used or put down. Vary the shots from scene to scene.
+    - No face appears in any scene. People are shown only as hands, wrists or forearms, and the
+      framing keeps the head out of the picture. Never describe someone talking to the camera.
+    - The script is narration spoken over the pictures by one off-screen voice. Write it to be heard,
+      not seen: it must still make sense with no speaker on screen.
+    - The video context describes the product, the surface or place it is filmed on and the light.
+      It names no presenter."""
+
+
 def product_name_rule(product_name: Optional[str]) -> str:
     """
     What the script writer and the details writer are told about the product's name. Without this,
@@ -167,7 +200,8 @@ def product_name_rule(product_name: Optional[str]) -> str:
 
 
 def asset_bible_prompt(
-    idea: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None
+    idea: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None,
+    video_type: Any = None,
 ) -> str:
     """
     The instruction for writing the Asset Bible. `pictures` are the attached pictures in order:
@@ -197,6 +231,14 @@ def asset_bible_prompt(
             "a material that a picture contradicts. Where the idea and a picture disagree, the picture wins.",
             "Use the idea only for what no picture shows.",
         ]
+    if video_type_of(video_type) == VIDEO_TYPE_PRODUCT:
+        lines += [
+            "",
+            "This video is product-led: no face is ever shown, and a narrator who is never seen talks over",
+            "the pictures. So for `character`, describe only the hands and forearms that hold the product",
+            "(skin tone, nails, sleeve, jewellery), or leave it empty when no hands are needed. For `voice`,",
+            "describe the narrator.",
+        ]
     lines += [
         "",
         "Write these descriptions:",
@@ -220,7 +262,8 @@ def asset_bible_prompt(
 
 
 def extract_asset_bible(
-    idea: str, llm_model: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None
+    idea: str, llm_model: str, pictures: Optional[List[Dict[str, Any]]] = None, product_name: Optional[str] = None,
+    video_type: Any = None,
 ) -> Dict[str, str]:
     """
     Writes an Asset Bible: one fixed, detailed description of the speaker, the products/props and
@@ -237,7 +280,7 @@ def extract_asset_bible(
     for picture in pictures:
         with open(picture["path"], "rb") as f:
             contents.append(types.Part.from_bytes(data=f.read(), mime_type=detect_image_mime(picture["path"])))
-    contents.append(asset_bible_prompt(idea, pictures, product_name))
+    contents.append(asset_bible_prompt(idea, pictures, product_name, video_type))
     client = get_client()  # kept in a variable: a dropped client can close its connection mid-request
     response = client.models.generate_content(
         model=llm_model,
@@ -398,6 +441,7 @@ def generate_script_and_scenes(
     asset_bible: Optional[Dict[str, str]] = None,
     structure: Optional[Dict[str, Any]] = None,
     product_name: Optional[str] = None,
+    video_type: Any = None,
 ) -> Dict[str, Any]:
     """
     Writes the video context and the scenes from a user idea.
@@ -508,6 +552,7 @@ def generate_script_and_scenes(
     You are a creative director for a UGC (User Generated Content) video.
     The user wants to make a video based on this idea: "{idea}"
     {product_name_rule(product_name)}
+    {product_led_script_rules(video_type)}
     {context_pictures_section}
     {asset_bible_section}
     {structure_section}

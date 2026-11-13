@@ -8,7 +8,7 @@ import firebase_admin
 from firebase_admin import firestore
 from app.auth import get_current_user
 from app.models import JobStatus, ImageSourceEnum, SelectAttemptRequest
-from app.jobs import FROM_PREVIOUS_SOURCES, run_video_generation_job, spawn_background, find_previous_scene, active_take_record, is_scene_skipped, is_stale_job
+from app.jobs import missing_start_picture_message, start_picture_ref, FROM_PREVIOUS_SOURCES, run_video_generation_job, spawn_background, find_previous_scene, active_take_record, is_scene_skipped, is_stale_job
 from app.model_registry import get_video_model, max_reference_images, refine_model_for_take
 
 logger = logging.getLogger(__name__)
@@ -112,13 +112,13 @@ async def generate_scene_video_endpoint(
 
     # Fail fast if the chosen starting picture does not exist (instead of failing inside the background job).
     if not image_bytes and not refining:
-        if image_source == "creator" and not project_data.get("startingImageRef"):
+        if image_source == "creator" and not start_picture_ref(project_data):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No creator photo found. Upload one in Step 1 or choose another starting picture.",
+                detail=missing_start_picture_message(project_data),
             )
         if image_source == "uploaded" and not (
-            scene_data.get("customStartImageRef") or project_data.get("startingImageRef")
+            scene_data.get("customStartImageRef") or start_picture_ref(project_data)
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
