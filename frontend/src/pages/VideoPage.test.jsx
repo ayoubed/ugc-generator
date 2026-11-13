@@ -25,6 +25,7 @@ vi.mock('../services/api', () => ({
   stitchVideos: vi.fn(async () => ({})),
   generateMusic: vi.fn(),
   exportPackage: vi.fn(async () => ({})),
+  previewVoice: vi.fn(async () => ({})),
   resolveStorageUrl: vi.fn(async (path) => `https://files.test/${path}`),
 }));
 

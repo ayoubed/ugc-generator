@@ -360,3 +360,8 @@ export async function fetchVoices() {
 export function exportPackage(projectId) {
   return callApi(`/api/projects/${projectId}/package`, { fallback: 'Could not start the export' });
 }
+
+/** Re-voice the project's scenes to its chosen voice, so the editor can play it (watch project.voicePreview). */
+export function previewVoice(projectId) {
+  return callApi(`/api/projects/${projectId}/voice/preview`, { fallback: 'Could not prepare the voice' });
+}

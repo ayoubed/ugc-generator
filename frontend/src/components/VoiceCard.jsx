@@ -1,6 +1,7 @@
 import React, { useId, useState } from 'react';
 import { updateProjectSettings } from '../hooks/useProject';
 import { useVoices } from '../hooks/useVoices';
+import { previewVoice } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import { projectVoice } from '../utils/projectProgress';
 
@@ -34,9 +35,12 @@ export default function VoiceCard({ project, disabled = false }) {
     }
   };
 
-  const handleChange = (event) => {
+  const handleChange = async (event) => {
     const voice = voices.find((v) => v.id === event.target.value);
-    save(voice ? { id: voice.id, name: voice.name } : null);
+    await save(voice ? { id: voice.id, name: voice.name } : null);
+    if (!voice) return;
+    // Re-voices the scenes now, so the editor below can play the voice before the stitch.
+    previewVoice(project.id).catch((err) => console.error('Could not prepare the voice:', err));
   };
 
   const sample = voices.find((v) => v.id === chosen?.id)?.previewUrl || '';
@@ -82,8 +86,8 @@ export default function VoiceCard({ project, disabled = false }) {
         </select>
         {chosen ? (
           <p className="field-hint">
-            The room sound of each scene goes with the old voice. Watch the lips on the first stitch; if they look
-            off, go back to each scene&apos;s own voice.
+            You can hear it in the editor below once it is prepared. The room sound of each scene goes with the old
+            voice; if the lips look off, go back to each scene&apos;s own voice.
           </p>
         ) : (
           <p className="field-hint">Nothing is changed: the video keeps the voices the scenes were made with.</p>

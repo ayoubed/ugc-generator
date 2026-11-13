@@ -4,10 +4,10 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import EditorCard from './EditorCard';
 import { updateProjectSettings } from '../hooks/useProject';
-import { exportPackage } from '../services/api';
+import { exportPackage, previewVoice } from '../services/api';
 
 vi.mock('../hooks/useProject', () => ({ updateProjectSettings: vi.fn(async () => {}) }));
-vi.mock('../services/api', () => ({ exportPackage: vi.fn(async () => ({})) }));
+vi.mock('../services/api', () => ({ exportPackage: vi.fn(async () => ({})), previewVoice: vi.fn(async () => ({})) }));
 vi.mock('firebase/firestore', () => ({ deleteField: () => 'DELETE' }));
 
 // Without a measured width the timeline is drawn at 60 pixels per second.
@@ -402,7 +402,7 @@ describe('export for another editor', () => {
 
   it('says it is being prepared, and cannot be asked for twice', () => {
     show({ project: { packageStatus: 'building', packageStartedAt: Date.now() } });
-    expect(screen.getByText(/Preparing the package: the clips, the music, a timeline file and the captions/)).toBeTruthy();
+    expect(screen.getByText(/Preparing the package: the clips, the music, a timeline file and the captions\. It downloads by itself/)).toBeTruthy();
     expect(document.getElementById('editor-export').disabled).toBe(true);
   });
 
@@ -429,5 +429,121 @@ describe('export for another editor', () => {
     show();
     await userEvent.click(screen.getByRole('button', { name: 'Export for another editor' }));
     expect(await screen.findByRole('alert')).toBeTruthy();
+  });
+});
+
+describe('hearing the chosen voice in the editor', () => {
+  const VOICE = { id: 'v1', name: 'Sarah' };
+  const preview = (ids, extra = {}) => ({
+    voiceId: 'v1', status: 'ready', scenes: Object.fromEntries(ids.map((id) => [id, { attempt: 1, url: `https://files.test/voice_${id}.mp3` }])), ...extra,
+  });
+  const current = () => screen.getByLabelText(/^Preview: scene/);
+
+  it('plays each scene\'s own voice when no voice is chosen', () => {
+    show();
+    expect(screen.getByText(/The preview plays each scene’s own voice with the music\./)).toBeTruthy();
+    expect(document.querySelector('[data-testid^="dub-"]')).toBeNull();
+    expect(previewVoice).not.toHaveBeenCalled();
+  });
+
+  it('plays the chosen voice in place of the scene\'s own sound once it is prepared', () => {
+    show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0', '1']) } });
+    expect(screen.getByText(/The preview plays the voice you chose \(Sarah\) with the music\./)).toBeTruthy();
+    expect(screen.getByTestId('dub-0').getAttribute('src')).toBe('https://files.test/voice_0.mp3');
+    fireEvent.loadedMetadata(current());
+    expect(current().muted).toBe(true);                  // the scene's own voice is silenced
+    expect(screen.getByTestId('dub-0').muted).toBe(false);
+    expect(previewVoice).not.toHaveBeenCalled();
+  });
+
+  it('asks for the voice to be prepared when it is chosen but not prepared yet, once', async () => {
+    const { rerender } = show({ settings: { voice: VOICE } });
+    expect(screen.getByText(/Preparing the voice you chose \(Sarah\)/)).toBeTruthy();
+    await waitFor(() => expect(previewVoice).toHaveBeenCalledWith('p1'));
+    rerender(<EditorCard project={{ id: 'p1', settings: { voice: VOICE } }} scenes={list(scene('0'), scene('1'))} fallbackSeconds={5} />);
+    expect(previewVoice).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the voice scene by scene while the rest is still being prepared', () => {
+    show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0'], { status: 'building', startedAt: Date.now() }) } });
+    expect(screen.getByText(/each scene switches to it as soon as it is ready/)).toBeTruthy();
+    expect(screen.getByTestId('dub-0')).toBeTruthy();
+    expect(screen.queryByTestId('dub-1')).toBeNull();
+    expect(previewVoice).not.toHaveBeenCalled();
+  });
+
+  it('does not use a voice prepared for another take or another voice', async () => {
+    show({ settings: { voice: VOICE }, scenes: list(scene('0', { activeAttempt: 2 })), project: { voicePreview: preview(['0']) } });
+    expect(screen.queryByTestId('dub-0')).toBeNull();
+    await waitFor(() => expect(previewVoice).toHaveBeenCalled());
+  });
+
+  it('says why the voice could not be prepared, and tries again when asked', async () => {
+    show({ settings: { voice: VOICE }, project: { voicePreview: preview([], { status: 'failed', error: 'That voice no longer exists.' }) } });
+    expect(screen.getByText(/could not be prepared: That voice no longer exists\./)).toBeTruthy();
+    expect(previewVoice).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(previewVoice).toHaveBeenCalledWith('p1');
+  });
+
+  it('keeps the voice in step with the picture while playing', async () => {
+    show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0', '1']) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    const voiceOver = screen.getByTestId('dub-0');
+    const at = (element, seconds) => Object.defineProperty(element, 'currentTime', { value: seconds, configurable: true, writable: true });
+    at(current(), 2);
+    at(voiceOver, 2.3);                                   // ran ahead
+    fireEvent.timeUpdate(current());
+    expect(voiceOver.currentTime).toBe(2);
+    at(voiceOver, 2.05);                                  // close enough: left alone
+    fireEvent.timeUpdate(current());
+    expect(voiceOver.currentTime).toBe(2.05);
+  });
+
+  it('applies a volume or mute change at once, without restarting the scene', async () => {
+    show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0', '1']) } });
+    await userEvent.click(clip(1));
+    fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '50' } });
+    expect(screen.getByTestId('dub-0').volume).toBe(0.5);
+    await userEvent.click(screen.getByLabelText("Mute this scene's own sound"));
+    expect(screen.getByTestId('dub-0').muted).toBe(true);
+  });
+
+  it('applies the volume to the scene\'s own sound when no voice is chosen', async () => {
+    show();
+    await userEvent.click(clip(1));
+    fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '30' } });
+    expect(current().volume).toBeCloseTo(0.3);
+    expect(current().muted).toBe(false);
+  });
+});
+
+describe('the export downloads by itself', () => {
+  it('saves the package as soon as the server has built it, after it was asked for here', async () => {
+    const clicked = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function record() { clicked.push([this.href, this.download]); });
+    try {
+      const { rerender } = show();
+      await userEvent.click(screen.getByRole('button', { name: 'Export for another editor' }));
+      expect(clicked).toEqual([]);
+      const done = { id: 'p1', settings: {}, packageStatus: 'ready', packageUrl: 'https://files.test/mug-ad.zip', packageName: 'mug-ad.zip' };
+      rerender(<EditorCard project={done} scenes={list(scene('0'), scene('1'))} fallbackSeconds={5} />);
+      await waitFor(() => expect(clicked).toEqual([['https://files.test/mug-ad.zip', 'mug-ad.zip']]));
+      rerender(<EditorCard project={{ ...done }} scenes={list(scene('0'), scene('1'))} fallbackSeconds={5} />);
+      expect(clicked.length).toBe(1);                       // once, not on every update of the project
+    } finally {
+      click.mockRestore();
+    }
+  });
+
+  it('does not download a package that was already there when the page opened', () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      show({ project: { packageStatus: 'ready', packageUrl: 'https://files.test/old.zip', packageName: 'old.zip' } });
+      expect(click).not.toHaveBeenCalled();
+      expect(screen.getByRole('link', { name: 'download old.zip' })).toBeTruthy();
+    } finally {
+      click.mockRestore();
+    }
   });
 });

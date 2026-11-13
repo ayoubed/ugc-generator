@@ -2,10 +2,11 @@ import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { deleteField } from 'firebase/firestore';
 import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
-import { exportPackage } from '../services/api';
+import { exportPackage, previewVoice } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import { MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, sceneEdit } from '../utils/edits';
-import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCard, projectMusic, sceneCaptionText, toMillis } from '../utils/projectProgress';
+import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCard, projectMusic, projectVoice, sceneCaptionText, toMillis } from '../utils/projectProgress';
+import { revoicedUrl, voicePreviewState } from '../utils/voicePreview';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
 
 const SAVE_DELAY_MS = 500;
@@ -31,12 +32,18 @@ const SAVE_DELAY_MS = 500;
  *                            when the page keeps the caption texts itself; otherwise they are saved here
  */
 const STALE_PACKAGE_MS = 10 * 60 * 1000; // same limit the API uses
+const VOICE_DRIFT_SECONDS = 0.1;          // more than this between lips and voice is noticeable
 
 export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false, captions = null }) {
   const baseId = useId();
   // One player per scene, all loaded up front and stacked; only the current one is shown. Loading
   // a scene's file when its turn came left the preview blank between scenes.
   const videos = useRef({});
+  // The scenes' speech in the voice chosen for the whole video, when it has been prepared: played
+  // in place of the scene's own sound, so the choice is heard before stitching.
+  const dubs = useRef({});
+  const askedVoice = useRef('');
+  const askedExport = useRef(false);
   const audio = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
@@ -158,6 +165,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       // Edits still waiting for their timer go first, so the package has them.
       Object.keys(pending.current).forEach(flush);
       await exportPackage(project.id);
+      askedExport.current = true;
     } catch (err) {
       console.error('Could not start the export:', err);
       setError(friendlyError(err));
@@ -171,14 +179,32 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // applied when the file is ready (a scene change loads another file).
   const seek = useRef({ clipTime: 0, token: 0 });
   const player = () => (current ? videos.current[current.id] || null : null);
-  const applySeek = () => {
+  const dub = () => (current && revoicedUrl(project, current.scene) ? dubs.current[current.id] || null : null);
+  // How loud the scene on screen is: its own sound, or the chosen voice in its place.
+  const applySound = () => {
     const element = player();
     if (!element || !current) return;
     const edit = editOf(current.scene);
-    element.muted = Boolean(edit?.muted);
-    element.volume = Math.min(1, Math.max(0, edit?.volume ?? 1)); // a browser cannot play louder than 100%
+    const level = Math.min(1, Math.max(0, edit?.volume ?? 1)); // a browser cannot play louder than 100%
+    const voiceOver = dub();
+    element.muted = Boolean(edit?.muted) || Boolean(voiceOver);
+    element.volume = level;
+    if (voiceOver) {
+      voiceOver.muted = Boolean(edit?.muted);
+      voiceOver.volume = level;
+    }
+  };
+  const applySeek = () => {
+    const element = player();
+    if (!element || !current) return;
+    applySound();
     element.currentTime = seek.current.clipTime;
     if (playing) element.play?.()?.catch?.(() => {});
+    const voiceOver = dub();
+    if (voiceOver) {
+      voiceOver.currentTime = seek.current.clipTime;
+      if (playing) voiceOver.play?.()?.catch?.(() => {});
+    }
   };
   const goTo = (seconds) => {
     const target = Math.max(0, Math.min(seconds, timeline.clipsEnd));
@@ -193,6 +219,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const stop = () => {
     setPlaying(false);
     Object.values(videos.current).forEach((element) => element?.pause?.());
+    Object.values(dubs.current).forEach((element) => element?.pause?.());
     audio.current?.pause?.();
   };
   const play = () => {
@@ -206,6 +233,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     if (track) track.volume = Math.min(1, musicPercent / 100);
     if (!playing) return;
     player()?.play?.()?.catch?.(() => {});
+    dub()?.play?.()?.catch?.(() => {});
     track?.play?.()?.catch?.(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, musicPercent]);
@@ -214,10 +242,53 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const currentId = current?.id;
   useEffect(() => {
     Object.entries(videos.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
+    Object.entries(dubs.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
     const element = currentId ? videos.current[currentId] : null;
     if (element && element.readyState >= 1) applySeek();   // not loaded yet: its loadedmetadata does it
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId]);
+
+  // A volume or mute change is heard at once, also while playing, and so is a voice that just got ready.
+  const currentEdit = current ? editOf(current.scene) : null;
+  const currentDubUrl = current ? revoicedUrl(project, current.scene) : '';
+  useEffect(() => {
+    applySound();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId, currentEdit?.volume, currentEdit?.muted, currentDubUrl]);
+
+  // The voice chosen for the whole video, prepared so it can be heard here.
+  const voice = projectVoice(project);
+  const voiceState = voicePreviewState(project, ready.map(({ scene }) => scene));
+  const askForVoice = async () => {
+    setError('');
+    try {
+      await previewVoice(project.id);
+    } catch (err) {
+      console.error('Could not prepare the voice:', err);
+      setError(friendlyError(err));
+    }
+  };
+  // Asked for once per voice when it is missing (a voice picked earlier, or a new take since).
+  useEffect(() => {
+    if (voiceState !== 'missing' || !voice || disabled || askedVoice.current === voice.id) return;
+    askedVoice.current = voice.id;
+    askForVoice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceState, voice?.id, disabled]);
+
+  // The package asked for here downloads by itself once the server has built it.
+  const packageReady = project?.packageStatus === 'ready' && project?.packageUrl;
+  useEffect(() => {
+    if (!askedExport.current || !packageReady) return;
+    askedExport.current = false;
+    const link = document.createElement('a');
+    link.href = project.packageUrl;
+    link.download = project.packageName || 'project.zip';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packageReady, project?.packageUrl]);
 
   // Called as the player advances: moves the playhead, and steps to the next scene at the out-point.
   // The scene on screen is over: on to the next one, or stop after the last.
@@ -235,8 +306,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const advance = () => {
     const element = player();
     if (!element || !current) return;
-    if (element.currentTime >= current.end - 0.03) stepOver();
-    else setTime(timelineTime(timeline, place.index, element.currentTime));
+    if (element.currentTime >= current.end - 0.03) {
+      stepOver();
+      return;
+    }
+    // The picture and the chosen voice are two players: pull the voice back when it drifts.
+    const voiceOver = dub();
+    if (voiceOver && Math.abs(voiceOver.currentTime - element.currentTime) > VOICE_DRIFT_SECONDS) {
+      voiceOver.currentTime = element.currentTime;
+    }
+    setTime(timelineTime(timeline, place.index, element.currentTime));
   };
   // A smooth playhead while playing (the player itself reports only a few times a second).
   useEffect(() => {
@@ -334,10 +413,10 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
 
       {(packageBuilding || project?.packageStatus === 'ready' || project?.packageStatus === 'failed') && (
         <p className={`gen-note ${project.packageStatus === 'failed' ? 'is-error' : ''}`} role="status">
-          {packageBuilding && 'Preparing the package: the clips, the music, a timeline file and the captions. This takes a moment.'}
+          {packageBuilding && 'Preparing the package: the clips, the music, a timeline file and the captions. It downloads by itself when it is ready.'}
           {!packageBuilding && project.packageStatus === 'ready' && project.packageUrl && (
             <>
-              The package is ready: <a href={project.packageUrl} download={project.packageName || 'project.zip'}>download {project.packageName || 'the package'}</a>.
+              The package is ready. If it did not download by itself: <a href={project.packageUrl} download={project.packageName || 'project.zip'}>download {project.packageName || 'the package'}</a>.
               {' '}It opens in Premiere Pro and DaVinci Resolve (see the README inside). Export again after you change the cut.
             </>
           )}
@@ -370,6 +449,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             );
           })}
           {music?.url && <audio ref={audio} src={music.url} loop preload="auto" aria-hidden="true" />}
+          {timeline.clips.map((clip) => {
+            const url = revoicedUrl(project, clip.scene);
+            return url ? (
+              <audio
+                key={clip.id} ref={(element) => { dubs.current[clip.id] = element; }} src={url} preload="auto" aria-hidden="true"
+                data-testid={`dub-${clip.id}`}
+              />
+            ) : null;
+          })}
         </div>
 
         <div className="editor-inspector" aria-live="polite">
@@ -627,8 +715,17 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
         </div>
       </div>
 
-      <p className="field-hint editor-foot">
-        The preview plays each scene&apos;s own voice with the music. Captions and the voice chosen under “Voice” are burned in when you stitch.
+      <p className="field-hint editor-foot" role="status">
+        {voiceState === 'off' && 'The preview plays each scene’s own voice with the music.'}
+        {voiceState === 'ready' && `The preview plays the voice you chose (${voice.name || 'one voice'}) with the music.`}
+        {(voiceState === 'building' || voiceState === 'missing') && `Preparing the voice you chose (${voice.name || 'one voice'}): each scene switches to it as soon as it is ready. Until then you hear the scene’s own voice.`}
+        {voiceState === 'failed' && (
+          <>
+            The voice you chose could not be prepared: {project.voicePreview?.error || 'try again.'}{' '}
+            <button type="button" className="link-button" onClick={askForVoice} disabled={disabled}>Try again</button>
+          </>
+        )}
+        {' '}Captions are burned in when you stitch.
       </p>
 
       <div aria-live="polite">

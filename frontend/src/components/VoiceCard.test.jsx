@@ -4,10 +4,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import VoiceCard from './VoiceCard';
 import { updateProjectSettings } from '../hooks/useProject';
+import { previewVoice } from '../services/api';
 
 const service = { available: true, voices: [], loading: false, error: '' };
 vi.mock('../hooks/useVoices', () => ({ useVoices: () => service }));
 vi.mock('../hooks/useProject', () => ({ updateProjectSettings: vi.fn(async () => {}) }));
+vi.mock('../services/api', () => ({ previewVoice: vi.fn(async () => ({})) }));
 
 const VOICES = [
   { id: 'v1', name: 'Rachel', description: 'female, young', previewUrl: 'https://x.test/rachel.mp3' },
@@ -42,11 +44,22 @@ describe('Voice for the whole video', () => {
     expect(updateProjectSettings).toHaveBeenCalledWith('p1', { voice: { id: 'v1', name: 'Rachel' } });
   });
 
+  it('prepares the voice for the editor as soon as it is picked, and not when it is switched off', async () => {
+    const { unmount } = render(<VoiceCard project={project()} />);
+    await userEvent.selectOptions(screen.getByLabelText('Voice for the whole video'), 'v1');
+    expect(previewVoice).toHaveBeenCalledWith('p1');
+    unmount();
+    vi.clearAllMocks();
+    render(<VoiceCard project={project({ id: 'v1', name: 'Rachel' })} />);
+    await userEvent.selectOptions(screen.getByLabelText('Voice for the whole video'), '');
+    expect(previewVoice).not.toHaveBeenCalled();
+  });
+
   it('shows the chosen voice with a sample and what to watch for', () => {
     render(<VoiceCard project={project({ id: 'v1', name: 'Rachel' })} />);
     expect(screen.getByLabelText('Voice for the whole video').value).toBe('v1');
     expect(screen.getByLabelText('Sample of Rachel').getAttribute('src')).toBe('https://x.test/rachel.mp3');
-    expect(screen.getByText(/Watch the lips on the first stitch/)).toBeTruthy();
+    expect(screen.getByText(/You can hear it in the editor below once it is prepared/)).toBeTruthy();
   });
 
   it('goes back to each scene’s own voice', async () => {
