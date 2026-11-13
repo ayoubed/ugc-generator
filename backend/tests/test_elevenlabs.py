@@ -348,3 +348,74 @@ def test_the_version_records_what_was_kept_of_each_scene(stitch):
         "0": {"start": 0.4, "end": 4.6, "length": 5.0, "attempt": 1},
         "1": {"start": 0.4, "end": 4.6, "length": 5.0, "attempt": 1},
     }
+
+
+# --- hearing the chosen voice before the stitch ---------------------------------------------------
+
+from app.routes import voices as voices_route   # noqa: E402
+
+
+@pytest.fixture
+def previewed(fake_db, monkeypatch):
+    project = fake_db.collection("projects").document("p1")
+    project.set({"userId": "u1", "settings": {"voice": {"id": "v1", "name": "Rachel"}}, "voicePreview": {"voiceId": "v1", "status": "building", "scenes": {}}})
+    for index, extra in enumerate(({}, {"skipped": True}, {})):
+        project.collection("scenes").document(str(index)).set({
+            "index": index, "activeAttempt": 2, "storageRef": f"users/u1/projects/p1/scenes/{index}/v.mp4", **extra})
+    made = []
+    monkeypatch.setattr(voices_route, "download_file", lambda ref, path: path)
+    monkeypatch.setattr(voices_route, "probe_media", lambda path: {"has_audio": True})
+    monkeypatch.setattr(voices_route, "get_download_url", lambda ref: f"https://files.test/{ref}")
+    monkeypatch.setattr(voices_route, "revoiced_audio",
+                        lambda uid, pid, sid, attempt, path, voice, work: made.append((sid, attempt, voice)) or ("a.mp3", f"users/u1/projects/p1/scenes/{sid}/voice_{voice}_v{attempt}.mp3"))
+    return project, made
+
+
+def test_the_preview_revoices_every_scene_in_the_video_and_says_where_to_play_it(previewed):
+    project, made = previewed
+    voices_route._run_voice_preview_sync("u1", "p1", "v1")
+    assert made == [("0", 2, "v1"), ("2", 2, "v1")]                     # the skipped scene is left out
+    preview = project.get().to_dict()["voicePreview"]
+    assert preview["status"] == "ready"
+    assert preview["scenes"]["0"] == {"attempt": 2, "url": "https://files.test/users/u1/projects/p1/scenes/0/voice_v1_v2.mp3"}
+    assert set(preview["scenes"]) == {"0", "2"}
+
+
+def test_a_preview_for_a_voice_that_is_no_longer_chosen_does_not_claim_to_be_ready(previewed):
+    project, _ = previewed
+    project.update({"settings": {"voice": {"id": "v2", "name": "Adam"}}})
+    voices_route._run_voice_preview_sync("u1", "p1", "v1")
+    assert project.get().to_dict()["voicePreview"]["status"] == "building"
+
+
+def test_a_failed_preview_says_why(previewed, monkeypatch):
+    project, _ = previewed
+
+    def refuse(*args):
+        raise VoiceServiceError("That voice no longer exists. Pick another voice on the Video step.")
+
+    monkeypatch.setattr(voices_route, "revoiced_audio", refuse)
+    voices_route._run_voice_preview_sync("u1", "p1", "v1")
+    preview = project.get().to_dict()["voicePreview"]
+    assert (preview["status"], preview["error"]) == ("failed", "That voice no longer exists. Pick another voice on the Video step.")
+
+
+def test_the_preview_starts_only_with_a_voice_chosen_and_for_the_owner(api):
+    api.db.collection("projects").document("p1").set({"userId": "u1", "settings": {"voice": {"id": "v1", "name": "Rachel"}}})
+    api.db.collection("projects").document("p2").set({"userId": "u1", "settings": {}})
+    api.db.collection("projects").document("p3").set({"userId": "someone-else", "settings": {"voice": {"id": "v1"}}})
+    assert api.post("/api/projects/p1/voice/preview").status_code == 202
+    assert api.db.store["projects/p1"]["voicePreview"]["status"] == "building"
+    assert api.db.store["projects/p1"]["voicePreview"]["voiceId"] == "v1"
+    assert api.started == ["run_voice_preview"]
+    assert api.post("/api/projects/p2/voice/preview").status_code == 400
+    assert api.post("/api/projects/p3/voice/preview").status_code == 403
+
+
+def test_revoiced_audio_is_made_once_and_then_reused(media, tmp_path):
+    from app.voiceover import revoiced_audio
+    _, ref = revoiced_audio("u1", "p1", "2", 1, "scene.mp4", "v1", str(tmp_path))
+    assert ref == "users/u1/projects/p1/scenes/2/voice_v1_v1.mp3" and media["changed"] == ["v1"]
+    media["stored"].add(ref)
+    revoiced_audio("u1", "p1", "2", 1, "scene.mp4", "v1", str(tmp_path))
+    assert media["changed"] == ["v1"]

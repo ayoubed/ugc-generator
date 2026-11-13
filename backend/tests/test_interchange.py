@@ -152,6 +152,7 @@ def packaged(fake_db, monkeypatch, tmp_path):
     monkeypatch.setattr(package, "download_file", fake_download)
     monkeypatch.setattr(package, "upload_file", fake_upload)
     monkeypatch.setattr(package, "get_download_url", lambda ref: f"https://files.test/{ref}")
+    monkeypatch.setattr(package, "set_download_name", lambda ref, name: uploaded.update(download_name=name))
     monkeypatch.setattr(package, "probe_media", lambda path: {"duration": 5.0, "has_audio": True, "width": 720, "height": 1280, "fps": 24.0})
     return project, uploaded
 
@@ -163,6 +164,7 @@ def test_the_package_holds_the_timeline_the_captions_and_the_media(packaged):
     assert (state["packageStatus"], state["packageName"], state["packageError"]) == ("ready", "mug-ad.zip", None)
     assert state["packageUrl"] == "https://files.test/users/u1/projects/p1/package/mug-ad_v1.zip"
     assert uploaded["content_type"] == "application/zip"
+    assert uploaded["download_name"] == "mug-ad.zip"            # saved under this name, not opened in the tab
     with zipfile.ZipFile(uploaded["path"]) as archive:
         names = sorted(archive.namelist())
         assert names == ["mug-ad/README.txt", "mug-ad/captions.srt", "mug-ad/media/music.mp3", "mug-ad/media/scene_01.mp4",

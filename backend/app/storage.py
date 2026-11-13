@@ -138,3 +138,11 @@ def copy_file(source_path: str, target_path: str) -> str:
     copy.metadata = {"firebaseStorageDownloadTokens": str(uuid.uuid4())}
     copy.patch()
     return token_url(copy)
+
+
+def set_download_name(storage_path: str, file_name: str) -> None:
+    """Makes a browser save the file under `file_name` instead of opening it or naming it by its path."""
+    safe = "".join(c for c in file_name if c.isalnum() or c in "-_. ") or "download"
+    blob = get_bucket().blob(storage_path)
+    blob.content_disposition = f'attachment; filename="{safe}"'
+    blob.patch()

@@ -60,7 +60,17 @@ def revoiced_scene(
     clip = probe_media(video_path)
     if not clip.get("has_audio"):
         return video_path
+    new_audio, _ = revoiced_audio(uid, project_id, scene_id, attempt, video_path, voice_id, work_dir)
+    return replace_audio(video_path, new_audio, os.path.join(work_dir, f"revoiced_{scene_id}.mp4"), float(clip["duration"]))
 
+
+def revoiced_audio(
+    uid: str, project_id: str, scene_id: str, attempt: Any, video_path: str, voice_id: str, work_dir: str
+) -> tuple:
+    """
+    The scene's speech in `voice_id` as an MP3: (local path, where it is kept in Storage). Made once
+    per take and voice, then reused by the stitch and by the editor's preview.
+    """
     cache_ref = voice_cache_path(uid, project_id, scene_id, attempt, voice_id)
     new_audio = os.path.join(work_dir, f"voice_{scene_id}.mp3")
     try:
@@ -70,10 +80,9 @@ def revoiced_scene(
         elevenlabs.change_voice(own_audio, voice_id, new_audio)
         try:
             upload_file(new_audio, cache_ref, content_type="audio/mpeg")
-        except Exception as e:  # the stitch still has the audio; only the reuse is lost
+        except Exception as e:  # the caller still has the audio; only the reuse is lost
             logger.warning("Could not keep the re-voiced audio of scene %s: %s", scene_id, e)
-
-    return replace_audio(video_path, new_audio, os.path.join(work_dir, f"revoiced_{scene_id}.mp4"), float(clip["duration"]))
+    return new_audio, cache_ref
 
 
 def saved_alignment(scene_data: Dict[str, Any], attempt: Any, text: str) -> Optional[List[tuple]]:

@@ -22,7 +22,7 @@ from app.errors import user_message
 from app.interchange import build_readme, build_srt, build_xmeml, caption_cues, kept_range, slug
 from app.jobs import _assert_owned_path, is_scene_skipped, ordered_scenes, project_music, scene_edits, spawn_background
 from app.pipeline import probe_media
-from app.storage import download_file, get_download_url, upload_file
+from app.storage import download_file, get_download_url, set_download_name, upload_file
 from app.voiceover import saved_alignment
 
 logger = logging.getLogger(__name__)
@@ -125,6 +125,7 @@ def _run_package_job_sync(uid: str, project_id: str) -> None:
         number = int(project_data.get("packageVersion") or 0) + 1
         storage_path = f"users/{uid}/projects/{project_id}/package/{folder}_v{number}.zip"
         upload_file(zip_path, storage_path, content_type="application/zip")
+        set_download_name(storage_path, f"{folder}.zip")
         project_ref.update({
             "packageStatus": "ready",
             "packageUrl": get_download_url(storage_path),
