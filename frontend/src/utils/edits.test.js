@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { changeEdit, currentEdits, editSummary, keptRange, musicVolumePercent, sameEdits, sceneEdit } from './edits';
+import {
+  changeEdit, currentEdits, editSummary, keptRange, musicVolumePercent, previewGain, previewMusicGain, sameEdits, sceneEdit,
+} from './edits';
 import { finalVideoChangeReason } from './projectProgress';
 
 const scene = { id: '0', activeAttempt: 2, storageRef: 'a.mp4' };
@@ -113,5 +115,24 @@ describe('the shortest cut', () => {
   it('is kept, despite floating point', () => {
     expect(keptRange({ start: 4.7 }, 5)).toMatchObject({ start: 4.7, end: 5 });
     expect(keptRange({ start: 4.8 }, 5)).toMatchObject({ start: 0, end: 5 });
+  });
+});
+
+describe('loudness in the preview', () => {
+  it('lets every step of the voice volume be heard, also above 100%', () => {
+    expect(previewGain(0)).toBe(0);
+    expect(previewGain(0.5)).toBe(0.35);
+    expect(previewGain(1)).toBe(0.7);
+    expect(previewGain(1.5)).toBe(0.85);
+    expect(previewGain(2)).toBe(1);
+    expect(previewGain(9)).toBe(1);
+    expect(previewGain(undefined)).toBe(0.7);
+  });
+
+  it('keeps the music as far under the voice as the stitched video does', () => {
+    expect(previewMusicGain(40)).toBe(0.14);              // a fifth of a voice at 100%
+    expect(previewMusicGain('medium')).toBe(0.14);
+    expect(previewMusicGain(0)).toBe(0);
+    expect(previewMusicGain(100)).toBe(0.35);
   });
 });

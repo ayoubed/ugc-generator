@@ -1,4 +1,5 @@
 import React, { useId, useState } from 'react';
+import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
 import { useVoices } from '../hooks/useVoices';
 import { previewVoice } from '../services/api';
@@ -44,6 +45,10 @@ export default function VoiceCard({ project, disabled = false }) {
   };
 
   const sample = voices.find((v) => v.id === chosen?.id)?.previewUrl || '';
+  // While the server re-voices the scenes for the editor: how many are done (null when it is not running).
+  const preview = project?.voicePreview;
+  const loadingScenes = chosen && preview?.voiceId === chosen.id && preview.status === 'building'
+    ? Object.keys(preview.scenes || {}).length : null;
   // A voice saved earlier that the account no longer has stays selectable, so it is not lost silently.
   const missing = chosen && !voices.some((v) => v.id === chosen.id);
   const unavailable = !available || Boolean(loadError);
@@ -93,6 +98,15 @@ export default function VoiceCard({ project, disabled = false }) {
           <p className="field-hint">Nothing is changed: the video keeps the voices the scenes were made with.</p>
         )}
       </div>
+
+      {chosen && loadingScenes !== null && (
+        <p className="editor-loading" role="status" style={{ marginTop: 'var(--space-3)', marginBottom: 0 }}>
+          <LoadingSpinner size="sm" />
+          <span>
+            Loading this voice for the editor: {loadingScenes} {loadingScenes === 1 ? 'scene' : 'scenes'} ready so far.
+          </span>
+        </p>
+      )}
 
       {sample && (
         // Keyed by voice, so picking another one loads its sample.

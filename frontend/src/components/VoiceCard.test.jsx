@@ -62,6 +62,15 @@ describe('Voice for the whole video', () => {
     expect(screen.getByText(/You can hear it in the editor below once it is prepared/)).toBeTruthy();
   });
 
+  it('says while the voice is loading for the editor, and how far it is', () => {
+    const loading = { ...project({ id: 'v1', name: 'Rachel' }), voicePreview: { voiceId: 'v1', status: 'building', scenes: { 0: {}, 1: {} } } };
+    const { unmount } = render(<VoiceCard project={loading} />);
+    expect(screen.getByText(/Loading this voice for the editor: 2 scenes ready so far\./)).toBeTruthy();
+    unmount();
+    render(<VoiceCard project={{ ...loading, voicePreview: { ...loading.voicePreview, status: 'ready' } }} />);
+    expect(screen.queryByText(/Loading this voice/)).toBeNull();
+  });
+
   it('goes back to each scene’s own voice', async () => {
     render(<VoiceCard project={project({ id: 'v1', name: 'Rachel' })} />);
     await userEvent.selectOptions(screen.getByLabelText('Voice for the whole video'), '');

@@ -4,7 +4,9 @@ import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
 import { exportPackage, previewVoice } from '../services/api';
 import { friendlyError } from '../utils/errors';
-import { MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, sceneEdit } from '../utils/edits';
+import {
+  MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, previewGain, previewMusicGain, sceneEdit,
+} from '../utils/edits';
 import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCard, projectMusic, projectVoice, sceneCaptionText, toMillis } from '../utils/projectProgress';
 import { revoicedUrl, voicePreviewState } from '../utils/voicePreview';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
@@ -185,7 +187,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     const element = player();
     if (!element || !current) return;
     const edit = editOf(current.scene);
-    const level = Math.min(1, Math.max(0, edit?.volume ?? 1)); // a browser cannot play louder than 100%
+    const level = previewGain(edit?.volume); // 100% plays below full, so a boost is heard too
     const voiceOver = dub();
     element.muted = Boolean(edit?.muted) || Boolean(voiceOver);
     element.volume = level;
@@ -230,7 +232,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // Starts or stops the players when "playing" flips, and keeps the music volume current.
   useEffect(() => {
     const track = audio.current;
-    if (track) track.volume = Math.min(1, musicPercent / 100);
+    if (track) track.volume = previewMusicGain(musicPercent);
     if (!playing) return;
     player()?.play?.()?.catch?.(() => {});
     dub()?.play?.()?.catch?.(() => {});
@@ -259,6 +261,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // The voice chosen for the whole video, prepared so it can be heard here.
   const voice = projectVoice(project);
   const voiceState = voicePreviewState(project, ready.map(({ scene }) => scene));
+  const voiceReadyCount = ready.filter(({ scene }) => revoicedUrl(project, scene)).length;
+  const voiceLoading = voiceState === 'building' || voiceState === 'missing';
   const askForVoice = async () => {
     setError('');
     try {
@@ -362,7 +366,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const chosenAuto = chosen ? autoCut(project, chosen.scene) : null;
   const select = (clip) => {
     setSelected({ type: 'clip', id: clip.id });
-    if (!playing) goTo(clip.at);
+    // Also while playing: the scene being adjusted is the one that is heard.
+    if (clip.id !== current?.id || !playing) goTo(clip.at);
   };
   // Moving the playhead: press on the ruler (or on the playhead's knob) and drag.
   const scrubTo = (event) => {
@@ -421,6 +426,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             </>
           )}
           {!packageBuilding && project.packageStatus === 'failed' && `The package could not be made: ${project.packageError || 'try again.'}`}
+        </p>
+      )}
+
+      {(voiceState === 'building' || voiceState === 'missing') && (
+        <p className="editor-loading" role="status">
+          <LoadingSpinner size="sm" />
+          <span>
+            Loading the voice {voice.name || 'you chose'}: {voiceReadyCount} of {ready.length} {ready.length === 1 ? 'scene' : 'scenes'} ready.
+            {' '}A scene plays its own voice until its new one is ready.
+          </span>
         </p>
       )}
 
@@ -661,7 +676,11 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                     onClick={() => select(clip)}
                   >
                     <span className="tl-level" style={{ height: `${Math.round(level * 100)}%` }} />
-                    <span className="tl-block-text">{edit?.muted ? 'Muted' : `${Math.round((edit?.volume ?? 1) * 100)}%`}</span>
+                    <span className="tl-block-text">
+                      {edit?.muted ? 'Muted' : `${Math.round((edit?.volume ?? 1) * 100)}%`}
+                      {voice && revoicedUrl(project, clip.scene) && ` · ${voice.name || 'chosen voice'}`}
+                      {voice && !revoicedUrl(project, clip.scene) && voiceLoading && ' · loading voice…'}
+                    </span>
                   </button>
                 );
               })}
@@ -718,7 +737,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       <p className="field-hint editor-foot" role="status">
         {voiceState === 'off' && 'The preview plays each scene’s own voice with the music.'}
         {voiceState === 'ready' && `The preview plays the voice you chose (${voice.name || 'one voice'}) with the music.`}
-        {(voiceState === 'building' || voiceState === 'missing') && `Preparing the voice you chose (${voice.name || 'one voice'}): each scene switches to it as soon as it is ready. Until then you hear the scene’s own voice.`}
+        {voiceLoading && `The voice you chose (${voice.name || 'one voice'}) is still loading: each scene switches to it as soon as it is ready.`}
         {voiceState === 'failed' && (
           <>
             The voice you chose could not be prepared: {project.voicePreview?.error || 'try again.'}{' '}

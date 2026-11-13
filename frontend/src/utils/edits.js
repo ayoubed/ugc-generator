@@ -109,3 +109,21 @@ export function musicVolumePercent(volume) {
   if (typeof volume === 'string' && volume in named) return named[volume];
   return number(volume) !== null ? Math.max(0, Math.min(100, Math.round(volume))) : named.medium;
 }
+
+/**
+ * How loud a scene plays in the editor's preview, from 0 to 1, for a voice volume of 0 to 2
+ * (0% to 200%). A browser cannot play louder than its full volume, so 100% is played below full
+ * and the range above it uses the rest: raising the volume past 100% is heard too. The stitched
+ * video gets the real gain.
+ */
+export const PREVIEW_UNITY = 0.7;
+export function previewGain(volume) {
+  const value = Math.max(0, Math.min(MAX_SCENE_VOLUME, number(volume) ?? 1));
+  const gain = value <= 1 ? PREVIEW_UNITY * value : PREVIEW_UNITY + (1 - PREVIEW_UNITY) * (value - 1);
+  return Math.round(gain * 1000) / 1000;
+}
+
+/** The music's volume in the preview, in the same proportion to a voice at 100% as in the stitched video. */
+export function previewMusicGain(percent) {
+  return Math.round(Math.min(1, PREVIEW_UNITY * musicVolumePercent(percent) / 200) * 1000) / 1000;
+}

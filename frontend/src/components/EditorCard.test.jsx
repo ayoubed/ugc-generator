@@ -299,6 +299,14 @@ describe('playing the cut', () => {
     expect(waiting.currentTime).toBe(1.5);
   });
 
+  it('moves to a clip when it is selected while playing, so the scene being adjusted is heard', async () => {
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await userEvent.click(clip(2));
+    expect(preview().getAttribute('aria-label')).toBe('Preview: scene 2');
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();   // still playing
+  });
+
   it('plays the music along with the cut', () => {
     show({ settings: { music: MUSIC } });
     expect(document.querySelector('audio').getAttribute('src')).toBe('https://files.test/m.mp3');
@@ -449,6 +457,7 @@ describe('hearing the chosen voice in the editor', () => {
   it('plays the chosen voice in place of the scene\'s own sound once it is prepared', () => {
     show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0', '1']) } });
     expect(screen.getByText(/The preview plays the voice you chose \(Sarah\) with the music\./)).toBeTruthy();
+    expect(screen.queryByText(/Loading the voice/)).toBeNull();
     expect(screen.getByTestId('dub-0').getAttribute('src')).toBe('https://files.test/voice_0.mp3');
     fireEvent.loadedMetadata(current());
     expect(current().muted).toBe(true);                  // the scene's own voice is silenced
@@ -458,7 +467,7 @@ describe('hearing the chosen voice in the editor', () => {
 
   it('asks for the voice to be prepared when it is chosen but not prepared yet, once', async () => {
     const { rerender } = show({ settings: { voice: VOICE } });
-    expect(screen.getByText(/Preparing the voice you chose \(Sarah\)/)).toBeTruthy();
+    expect(screen.getByText(/Loading the voice Sarah: 0 of 2 scenes ready\./)).toBeTruthy();
     await waitFor(() => expect(previewVoice).toHaveBeenCalledWith('p1'));
     rerender(<EditorCard project={{ id: 'p1', settings: { voice: VOICE } }} scenes={list(scene('0'), scene('1'))} fallbackSeconds={5} />);
     expect(previewVoice).toHaveBeenCalledTimes(1);
@@ -466,7 +475,9 @@ describe('hearing the chosen voice in the editor', () => {
 
   it('uses the voice scene by scene while the rest is still being prepared', () => {
     show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0'], { status: 'building', startedAt: Date.now() }) } });
-    expect(screen.getByText(/each scene switches to it as soon as it is ready/)).toBeTruthy();
+    expect(screen.getByText(/Loading the voice Sarah: 1 of 2 scenes ready\./)).toBeTruthy();
+    expect(track('Voice track').getByText('100% · Sarah')).toBeTruthy();
+    expect(track('Voice track').getByText('100% · loading voice…')).toBeTruthy();
     expect(screen.getByTestId('dub-0')).toBeTruthy();
     expect(screen.queryByTestId('dub-1')).toBeNull();
     expect(previewVoice).not.toHaveBeenCalled();
@@ -504,7 +515,7 @@ describe('hearing the chosen voice in the editor', () => {
     show({ settings: { voice: VOICE }, project: { voicePreview: preview(['0', '1']) } });
     await userEvent.click(clip(1));
     fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '50' } });
-    expect(screen.getByTestId('dub-0').volume).toBe(0.5);
+    expect(screen.getByTestId('dub-0').volume).toBe(0.35);   // half of the preview's level for 100%
     await userEvent.click(screen.getByLabelText("Mute this scene's own sound"));
     expect(screen.getByTestId('dub-0').muted).toBe(true);
   });
@@ -513,8 +524,12 @@ describe('hearing the chosen voice in the editor', () => {
     show();
     await userEvent.click(clip(1));
     fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '30' } });
-    expect(current().volume).toBeCloseTo(0.3);
+    expect(current().volume).toBeCloseTo(0.21);
     expect(current().muted).toBe(false);
+    fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '100' } });
+    expect(current().volume).toBeCloseTo(0.7);
+    fireEvent.change(screen.getByLabelText('Voice volume'), { target: { value: '200' } });
+    expect(current().volume).toBe(1);                      // a boost is heard too
   });
 });
 
