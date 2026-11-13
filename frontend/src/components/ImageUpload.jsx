@@ -140,7 +140,7 @@ export default function ImageUpload({
           style={{
             border: `2px dashed ${isDragging ? 'var(--color-accent)' : 'var(--color-border)'}`,
             borderRadius: 'var(--radius-card)',
-            backgroundColor: isDragging ? 'var(--color-accent-light)' : '#ffffff',
+            backgroundColor: isDragging ? 'var(--color-accent-light)' : 'var(--bg-field)',
             padding: '32px 16px',
             textAlign: 'center',
             cursor: 'pointer',
@@ -158,7 +158,7 @@ export default function ImageUpload({
               height: '44px',
               borderRadius: '50%',
               backgroundColor: 'var(--color-accent-light)',
-              color: 'var(--color-accent)',
+              color: 'var(--color-accent-text)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

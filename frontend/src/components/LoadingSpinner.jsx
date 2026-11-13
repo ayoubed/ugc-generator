@@ -31,7 +31,7 @@ export default function LoadingSpinner({ size = 'md', className = '', label = ''
           width: current.size,
           height: current.size,
           borderRadius: '50%',
-          border: `${current.border} solid #e0e7ff`,
+          border: `${current.border} solid var(--color-accent-border)`,
           borderTopColor: 'var(--color-accent)',
         }}
       />

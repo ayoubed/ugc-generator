@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../hooks/useTheme';
+import { THEMES } from '../utils/theme';
 
 /**
  * Main application layout shell with navbar, user profile dropdown, and content container.
  */
 export default function Layout({ children }) {
   const { user, signOut } = useAuth();
+  const [theme, setTheme] = useTheme();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
@@ -103,6 +106,22 @@ export default function Layout({ children }) {
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', wordBreak: 'break-all' }}>
                       {user.email}
+                    </div>
+                  </div>
+                  <div className="theme-choice">
+                    <span className="theme-choice-label" id="theme-choice-label">Theme</span>
+                    <div className="music-segmented" role="group" aria-labelledby="theme-choice-label">
+                      {THEMES.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`music-seg ${theme === option.value ? 'is-active' : ''}`}
+                          aria-pressed={theme === option.value}
+                          onClick={() => setTheme(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                   <button

@@ -105,7 +105,7 @@ export default function LoginPage() {
             alignItems: 'center',
             justifyContent: 'center',
             gap: '12px',
-            backgroundColor: '#ffffff',
+            backgroundColor: 'var(--bg-surface)',
             border: '1px solid var(--color-border)',
             borderRadius: 'var(--radius-btn)',
             boxShadow: 'var(--shadow-sm)',

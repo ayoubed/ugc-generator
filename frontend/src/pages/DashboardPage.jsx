@@ -291,7 +291,7 @@ export default function DashboardPage() {
                     <span
                       style={{
                         fontSize: '0.8125rem',
-                        color: 'var(--color-accent)',
+                        color: 'var(--color-accent-text)',
                         fontWeight: 500,
                       }}
                     >
