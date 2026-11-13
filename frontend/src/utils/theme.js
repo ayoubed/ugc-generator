@@ -1,21 +1,18 @@
 /**
- * Light and dark theme. The choice is kept in this browser; "system" follows the device setting.
+ * Light and dark theme, switched with the toggle in the header. The choice is kept in this
+ * browser. ("system", following the device setting, is still understood but no longer offered.)
  * The theme is applied by setting data-theme on <html>, which swaps the colour variables in
  * index.css. index.html applies the saved choice before the app loads, so there is no flash.
  */
 export const THEME_KEY = 'eleviat-theme';
-export const THEMES = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'system', label: 'Device' },
-];
+const CHOICES = ['light', 'dark', 'system'];
 const DEFAULT_THEME = 'light';
 
 /** The saved choice: 'light', 'dark' or 'system'. */
 export function storedTheme() {
   try {
     const saved = window.localStorage.getItem(THEME_KEY);
-    return THEMES.some((t) => t.value === saved) ? saved : DEFAULT_THEME;
+    return CHOICES.includes(saved) ? saved : DEFAULT_THEME;
   } catch {
     return DEFAULT_THEME; // storage blocked (private window)
   }

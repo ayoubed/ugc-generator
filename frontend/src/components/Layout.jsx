@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
-import { THEMES } from '../utils/theme';
+import { resolveTheme } from '../utils/theme';
 
 /**
  * Main application layout shell with navbar, user profile dropdown, and content container.
@@ -10,6 +10,7 @@ import { THEMES } from '../utils/theme';
 export default function Layout({ children }) {
   const { user, signOut } = useAuth();
   const [theme, setTheme] = useTheme();
+  const dark = resolveTheme(theme) === 'dark';
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
@@ -52,6 +53,26 @@ export default function Layout({ children }) {
             <span>Eleviat</span>
           </Link>
 
+          <div className="app-header-actions">
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => setTheme(dark ? 'light' : 'dark')}
+            aria-pressed={dark}
+            aria-label="Dark theme"
+            title={dark ? 'Switch to the light theme' : 'Switch to the dark theme'}
+          >
+            {dark ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+              </svg>
+            )}
+          </button>
           {user && (
             <div style={{ position: 'relative' }} ref={dropdownRef}>
               <button
@@ -108,22 +129,6 @@ export default function Layout({ children }) {
                       {user.email}
                     </div>
                   </div>
-                  <div className="theme-choice">
-                    <span className="theme-choice-label" id="theme-choice-label">Theme</span>
-                    <div className="music-segmented" role="group" aria-labelledby="theme-choice-label">
-                      {THEMES.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={`music-seg ${theme === option.value ? 'is-active' : ''}`}
-                          aria-pressed={theme === option.value}
-                          onClick={() => setTheme(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                   <button
                     type="button"
                     className="dropdown-item"
@@ -140,6 +145,7 @@ export default function Layout({ children }) {
               )}
             </div>
           )}
+          </div>
         </div>
       </header>
 
