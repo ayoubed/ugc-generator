@@ -34,7 +34,9 @@ const STALE_PACKAGE_MS = 10 * 60 * 1000; // same limit the API uses
 
 export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false, captions = null }) {
   const baseId = useId();
-  const video = useRef(null);
+  // One player per scene, all loaded up front and stacked; only the current one is shown. Loading
+  // a scene's file when its turn came left the preview blank between scenes.
+  const videos = useRef({});
   const audio = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
@@ -168,8 +170,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // The preview shows one scene's file at a time. `seek` says where the player should be; it is
   // applied when the file is ready (a scene change loads another file).
   const seek = useRef({ clipTime: 0, token: 0 });
+  const player = () => (current ? videos.current[current.id] || null : null);
   const applySeek = () => {
-    const element = video.current;
+    const element = player();
     if (!element || !current) return;
     const edit = editOf(current.scene);
     element.muted = Boolean(edit?.muted);
@@ -189,7 +192,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   };
   const stop = () => {
     setPlaying(false);
-    video.current?.pause?.();
+    Object.values(videos.current).forEach((element) => element?.pause?.());
     audio.current?.pause?.();
   };
   const play = () => {
@@ -202,9 +205,19 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     const track = audio.current;
     if (track) track.volume = Math.min(1, musicPercent / 100);
     if (!playing) return;
-    video.current?.play?.()?.catch?.(() => {});
+    player()?.play?.()?.catch?.(() => {});
     track?.play?.()?.catch?.(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, musicPercent]);
+
+  // The scene on screen changed: the others stop, and the new one starts from where the playhead is.
+  const currentId = current?.id;
+  useEffect(() => {
+    Object.entries(videos.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
+    const element = currentId ? videos.current[currentId] : null;
+    if (element && element.readyState >= 1) applySeek();   // not loaded yet: its loadedmetadata does it
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId]);
 
   // Called as the player advances: moves the playhead, and steps to the next scene at the out-point.
   // The scene on screen is over: on to the next one, or stop after the last.
@@ -220,7 +233,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     setTime(next.at);
   };
   const advance = () => {
-    const element = video.current;
+    const element = player();
     if (!element || !current) return;
     if (element.currentTime >= current.end - 0.03) stepOver();
     else setTime(timelineTime(timeline, place.index, element.currentTime));
@@ -334,20 +347,28 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
 
       <div className="editor-stage">
         <div className="editor-preview">
-          {current && (
-            <video
-              // Keyed by scene: each scene's file loads fresh and starts where the playhead is.
-              key={current.id}
-              ref={video}
-              src={current.scene.videoUrl}
-              playsInline
-              preload="auto"
-              aria-label={`Preview: scene ${current.label}`}
-              onLoadedMetadata={applySeek}
-              onTimeUpdate={playing ? advance : undefined}
-              onEnded={stepOver}
-            />
-          )}
+          {timeline.clips.map((clip) => {
+            const isCurrent = clip.id === current?.id;
+            return (
+              <video
+                key={clip.id}
+                ref={(element) => { videos.current[clip.id] = element; }}
+                className={isCurrent ? 'is-current' : ''}
+                src={clip.scene.videoUrl}
+                playsInline
+                preload="auto"
+                aria-label={isCurrent ? `Preview: scene ${clip.label}` : undefined}
+                aria-hidden={isCurrent ? undefined : 'true'}
+                onLoadedMetadata={(event) => {
+                  // A scene waiting for its turn rests on its first kept frame, ready to show.
+                  if (isCurrent) applySeek();
+                  else event.currentTarget.currentTime = clip.start;
+                }}
+                onTimeUpdate={isCurrent && playing ? advance : undefined}
+                onEnded={isCurrent ? stepOver : undefined}
+              />
+            );
+          })}
           {music?.url && <audio ref={audio} src={music.url} loop preload="auto" aria-hidden="true" />}
         </div>
 

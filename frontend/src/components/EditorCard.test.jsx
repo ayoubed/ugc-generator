@@ -280,6 +280,25 @@ describe('playing the cut', () => {
     expect(screen.getByText('0:05.0 / 0:10.0')).toBeTruthy();
   });
 
+  it('keeps every scene loaded, so going to the next one shows no blank', async () => {
+    show();
+    const players = [...document.querySelectorAll('.editor-preview video')];
+    expect(players.map((p) => p.getAttribute('src'))).toEqual(['https://files.test/0.mp4', 'https://files.test/1.mp4']);
+    expect(players.map((p) => p.className)).toEqual(['is-current', '']);
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    fireEvent.ended(preview());
+    const after = [...document.querySelectorAll('.editor-preview video')];
+    expect(after[0]).toBe(players[0]);                      // the same players, not reloaded
+    expect(after.map((p) => p.className)).toEqual(['', 'is-current']);
+  });
+
+  it('rests a waiting scene on its first kept frame', () => {
+    show({ settings: { edits: { 1: { attempt: 1, start: 1.5 } } } });
+    const waiting = document.querySelectorAll('.editor-preview video')[1];
+    fireEvent.loadedMetadata(waiting);
+    expect(waiting.currentTime).toBe(1.5);
+  });
+
   it('plays the music along with the cut', () => {
     show({ settings: { music: MUSIC } });
     expect(document.querySelector('audio').getAttribute('src')).toBe('https://files.test/m.mp3');
