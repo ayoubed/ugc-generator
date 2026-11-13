@@ -70,7 +70,6 @@ describe('colours', () => {
       '#000', '#fff', '#ffffff', '#0f172a', '#1e1b4b', '#14181d', '#ffe600', '#fecaca', '#b45309',
       'rgba(255, 255, 255, 0.3)', 'rgba(255, 255, 255, 0.22)', 'rgba(255, 255, 255, 0.12)',
       'rgba(15, 23, 42, 0.72)', 'rgba(15, 23, 42, 0.2)', 'rgba(0, 0, 0, 0.53)',
-      'rgba(129, 140, 248, 0.22)', 'rgba(129, 140, 248, 0)',
     ]);
     const rest = css.replace(light, '').replace(dark, '');
     const found = new Set((rest.match(COLOUR) || []).map((c) => c.toLowerCase()));

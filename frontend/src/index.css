@@ -74,51 +74,52 @@
   --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Dark theme: the same variables with other values. Every colour in this file goes through a
-   variable, except the ones that belong to the video itself (players, caption samples), which look
-   the same in both themes. */
+/* Dark theme: black and white, like the eleviat.com landing page (near-black page, charcoal
+   panels, white text, white buttons with black text). Green, amber and red stay for status only.
+   Every colour in this file goes through a variable, except the ones that belong to the video
+   itself (players, caption samples), which look the same in both themes. */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg-primary: #1a1d24;
-  --bg-surface: #1a1d24;
-  --bg-page: #0e1014;
-  --bg-field: #12141a;
-  --bg-card: #21252e;
-  --bg-hover: #272c37;
-  --bg-muted: #21252e;
-  --on-accent: #ffffff;
+  --bg-primary: #141414;
+  --bg-surface: #141414;
+  --bg-page: #0a0a0a;
+  --bg-field: #0f0f0f;
+  --bg-card: #1a1a1a;
+  --bg-hover: #222222;
+  --bg-muted: #1a1a1a;
+  --on-accent: #0a0a0a;
 
-  --text-primary: #e9ecf1;
-  --text-secondary: #a4adba;
-  --text-tertiary: #7b8595;
+  --text-primary: #fafafa;
+  --text-secondary: #c9c9c9;
+  --text-tertiary: #9a9a9a;
 
-  --color-accent: #6366f1;
-  --color-accent-hover: #7477f3;
-  --color-accent-light: #23264a;
-  --color-accent-text: #a5b4fc;
-  --color-accent-border: #3d4180;
+  --color-accent: #ffffff;
+  --color-accent-hover: #e2e2e2;
+  --color-accent-light: #1f1f1f;
+  --color-accent-text: #ffffff;
+  --color-accent-border: #3a3a3a;
 
-  --color-border: #2b303b;
-  --color-border-field: #373d4a;
-  --color-border-strong: #4a5364;
-  --color-border-focus: #818cf8;
+  --color-border: #242424;
+  --color-border-field: #2e2e2e;
+  --color-border-strong: #454545;
+  --color-border-focus: #ffffff;
 
   --color-success: #4ade80;
-  --color-success-light: #12281c;
-  --color-success-border: #1f5134;
-  --color-warning: #f59e0b;
-  --color-warning-light: #2a2010;
-  --color-warning-border: #5e4715;
+  --color-success-light: #0f1a13;
+  --color-success-border: #1e3a28;
+  --color-warning: #f5b301;
+  --color-warning-light: #1c160a;
+  --color-warning-border: #3f3212;
   --color-warning-text: #fbbf24;
   --color-error: #f87171;
-  --color-error-light: #2e1719;
-  --color-error-border: #6d262a;
-  --color-info: #60a5fa;
-  --color-info-light: #14243c;
+  --color-error-light: #1f1112;
+  --color-error-border: #4a1f21;
+  --color-info: #c9c9c9;
+  --color-info-light: #1f1f1f;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 10px 25px -3px rgba(0, 0, 0, 0.65);
 }
 
 /* Base Reset & Box Sizing */
@@ -242,6 +243,11 @@ a:hover {
 .btn-danger:hover:not(:disabled) {
   background-color: var(--color-error-light);
   border-color: var(--color-error);
+}
+
+.btn-primary .animate-spin {
+  border-color: color-mix(in srgb, currentColor 25%, transparent) !important;
+  border-top-color: currentColor !important;
 }
 
 .btn-sm {
@@ -845,7 +851,7 @@ a:hover {
   border-radius: var(--radius-full);
   border: none;
   background: rgba(15, 23, 42, 0.72);
-  color: var(--on-accent);
+  color: #fff;
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
@@ -3280,7 +3286,7 @@ a:hover {
   padding: var(--space-6);
   border: 1px solid var(--color-accent-border);
   background:
-    radial-gradient(120% 140% at 100% 0%, rgba(129, 140, 248, 0.22) 0%, rgba(129, 140, 248, 0) 55%),
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--color-accent) 14%, transparent) 0%, transparent 55%),
     linear-gradient(135deg, var(--color-accent-light) 0%, var(--bg-surface) 70%);
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
