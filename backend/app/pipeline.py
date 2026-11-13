@@ -1169,7 +1169,7 @@ def apply_scene_edit(
             start = max(0.0, min(duration, s))
         if e is not None:
             end = max(0.0, min(duration, e))
-        if end - start < MIN_EDIT_SECONDS:
+        if end - start < MIN_EDIT_SECONDS - 1e-6:   # tolerance: 5 - 4.7 is a hair under 0.3
             return auto_start, auto_end
     return start, end
 
@@ -1444,6 +1444,7 @@ def stitch_videos(
     end_card: Optional[Dict[str, Any]] = None,
     caption_words: Optional[List[Optional[List[Tuple[str, float, float]]]]] = None,
     edits: Optional[List[Optional[Dict[str, Any]]]] = None,
+    report: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Stitches scene videos into one video. `labels` name the clips in error messages ("Scene 2").
@@ -1451,6 +1452,9 @@ def stitch_videos(
     clip ([(word, start, end)]), or None to estimate that clip's timing from where speech is heard.
     edits: optional, one entry per clip, from the editor: {"start", "end"} (seconds kept, replacing
     the automatic trim), "muted" (the scene's own sound is dropped) and "volume" (1 = unchanged).
+    report: optional dict that receives "cuts": for each clip, the part that was kept
+    ({"start", "end", "length"} in seconds, `length` being the whole clip), so the editor's
+    timeline can show the automatic cut.
     end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
@@ -1484,10 +1488,16 @@ def stitch_videos(
         if isinstance(edit, dict) and edit.get("muted"):
             clip["has_audio"] = False   # the mix puts silence of the same length in its place
         clip["trim_start"] = start
+        clip["full_duration"] = full
         clip["duration"] = end - start
         # Speech as it sits in the trimmed clip (used to time the captions).
         clip["speech"] = [(max(0.0, a - start), min(end, b) - start) for a, b in speech if b > start and a < end]
     total_duration = sum(max(0.05, c["duration"]) for c in clips)
+    if report is not None:
+        report["cuts"] = [
+            {"start": round(c["trim_start"], 3), "end": round(c["trim_start"] + c["duration"], 3), "length": round(c["full_duration"], 3)}
+            for c in clips
+        ]
 
     width = next((c["width"] for c in clips if c.get("width")), None)
     height = next((c["height"] for c in clips if c.get("height")), None)

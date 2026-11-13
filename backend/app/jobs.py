@@ -1024,6 +1024,7 @@ def _run_stitch_job_sync(
         )
 
         edits = scene_edits(project_data, scenes_list)
+        stitch_report: Dict[str, Any] = {}
         stitch_videos(
             local_video_paths,
             final_video_local,
@@ -1036,6 +1037,7 @@ def _run_stitch_job_sync(
             end_card=end_card,
             caption_words=caption_words,
             edits=edits,
+            report=stitch_report,
         )
 
         # 3. Every stitch is a new version, so earlier final videos stay available.
@@ -1077,6 +1079,11 @@ def _run_stitch_job_sync(
             "voice": voice,
             # The editor's trims, mutes and volumes this version was cut with, per scene id.
             "edits": {doc_id: edit for (_, doc_id, _), edit in zip(scenes_list, edits) if edit},
+            # The part of each scene that ended up in the video (automatic cut or edit), for the timeline.
+            "cuts": {
+                doc_id: {**cut, "attempt": data.get("activeAttempt")}
+                for (_, doc_id, data), cut in zip(scenes_list, stitch_report.get("cuts") or [])
+            },
             "endCard": {
                 "imageRef": card["imageRef"],
                 "headline": end_card["headline"],

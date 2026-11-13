@@ -23,12 +23,19 @@ export function sceneEdit(project, scene) {
   return Object.keys(edit).length ? edit : null;
 }
 
-/** Start and end of the kept part, for a clip of `duration` seconds (the whole clip without an edit). */
-export function keptRange(edit, duration) {
+/**
+ * Start and end of the kept part, for a clip of `duration` seconds. A side the edit does not set
+ * follows `auto`, the automatic cut ({start, end}, when it is known), otherwise the clip's edge.
+ */
+export function keptRange(edit, duration, auto = null) {
   const length = Math.max(0, number(duration) ?? 0);
-  let start = Math.min(length, Math.max(0, number(edit?.start) ?? 0));
-  let end = Math.min(length, Math.max(0, number(edit?.end) ?? length));
-  if (end - start < MIN_KEPT_SECONDS) [start, end] = [0, length];
+  const inside = (value) => Math.min(length, Math.max(0, value));
+  const autoStart = inside(number(auto?.start) ?? 0);
+  const autoEnd = inside(number(auto?.end) ?? length);
+  let start = inside(number(edit?.start) ?? autoStart);
+  let end = inside(number(edit?.end) ?? autoEnd);
+  // (a hair of tolerance: 5 - 4.7 is a little less than 0.3 in floating point)
+  if (end - start < MIN_KEPT_SECONDS - 1e-6) [start, end] = autoEnd - autoStart >= MIN_KEPT_SECONDS ? [autoStart, autoEnd] : [0, length];
   return { start, end, length: end - start };
 }
 
@@ -36,17 +43,18 @@ export function keptRange(edit, duration) {
  * The edit to save after changing `field` to `value`, or null when nothing differs from the
  * untouched scene any more. Trim points are kept MIN_KEPT_SECONDS apart and inside the clip.
  */
-export function changeEdit(edit, field, value, duration, attempt) {
+export function changeEdit(edit, field, value, duration, attempt, auto = null) {
   const next = { ...(edit || {}) };
   const length = Math.max(0, number(duration) ?? 0);
+  const tenth = (seconds) => Math.round(seconds * 10) / 10;
+  const now = keptRange(edit, length, auto);
+  // A side put back where the automatic cut (or the clip's edge) has it is no longer an edit.
   if (field === 'start') {
-    const end = number(next.end) ?? length;
-    next.start = Math.round(Math.max(0, Math.min(value, end - MIN_KEPT_SECONDS)) * 10) / 10;
-    if (next.start <= 0) delete next.start;
+    next.start = tenth(Math.max(0, Math.min(value, now.end - MIN_KEPT_SECONDS)));
+    if (next.start === tenth(number(auto?.start) ?? 0)) delete next.start;
   } else if (field === 'end') {
-    const start = number(next.start) ?? 0;
-    next.end = Math.round(Math.min(length, Math.max(value, start + MIN_KEPT_SECONDS)) * 10) / 10;
-    if (next.end >= length) delete next.end;
+    next.end = tenth(Math.min(length, Math.max(value, now.start + MIN_KEPT_SECONDS)));
+    if (next.end === tenth(number(auto?.end) ?? length)) delete next.end;
   } else if (field === 'muted') {
     if (value) next.muted = true;
     else delete next.muted;
@@ -59,11 +67,11 @@ export function changeEdit(edit, field, value, duration, attempt) {
 }
 
 /** One line on what an edit does, e.g. "0.5s to 4.0s · muted". '' without an edit. */
-export function editSummary(edit, duration) {
+export function editSummary(edit, duration, auto = null) {
   if (!edit) return '';
   const parts = [];
   if (number(edit.start) !== null || number(edit.end) !== null) {
-    const { start, end } = keptRange(edit, duration);
+    const { start, end } = keptRange(edit, duration, auto);
     parts.push(`${start.toFixed(1)}s to ${end.toFixed(1)}s`);
   }
   if (edit.muted) parts.push('muted');

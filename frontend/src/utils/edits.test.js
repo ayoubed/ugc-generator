@@ -83,3 +83,35 @@ describe('music volume', () => {
     expect(musicVolumePercent(undefined)).toBe(40);
   });
 });
+
+describe('edits on top of the automatic cut', () => {
+  const auto = { start: 0.4, end: 4.6 };
+
+  it('follows the automatic cut on a side the edit does not set', () => {
+    expect(keptRange(null, 5, auto)).toMatchObject({ start: 0.4, end: 4.6 });
+    expect(keptRange(null, 5, auto).length).toBeCloseTo(4.2);
+    expect(keptRange({ start: 1 }, 5, auto)).toMatchObject({ start: 1, end: 4.6 });
+    expect(keptRange({ end: 5 }, 5, auto)).toMatchObject({ start: 0.4, end: 5 });
+  });
+
+  it('keeps an edit that reaches past the automatic cut, back to the clip\'s edge', () => {
+    expect(changeEdit(null, 'start', 0, 5, 2, auto)).toEqual({ start: 0, attempt: 2 });
+    expect(changeEdit(null, 'end', 5, 5, 2, auto)).toEqual({ end: 5, attempt: 2 });
+  });
+
+  it('is no edit any more once a side is back on the automatic cut', () => {
+    expect(changeEdit({ start: 1, attempt: 2 }, 'start', 0.4, 5, 2, auto)).toBeNull();
+    expect(changeEdit({ end: 3, attempt: 2 }, 'end', 4.6, 5, 2, auto)).toBeNull();
+  });
+
+  it('cannot move the start past the automatic end', () => {
+    expect(changeEdit(null, 'start', 4.9, 5, 2, auto)).toEqual({ start: 4.3, attempt: 2 });
+  });
+});
+
+describe('the shortest cut', () => {
+  it('is kept, despite floating point', () => {
+    expect(keptRange({ start: 4.7 }, 5)).toMatchObject({ start: 4.7, end: 5 });
+    expect(keptRange({ start: 4.8 }, 5)).toMatchObject({ start: 0, end: 5 });
+  });
+});

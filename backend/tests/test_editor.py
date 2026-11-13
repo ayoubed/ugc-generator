@@ -16,6 +16,10 @@ def test_an_edit_replaces_the_automatic_trim():
     assert apply_scene_edit(5.0, 0.4, 4.6, None) == (0.4, 4.6)
 
 
+def test_the_shortest_cut_the_editor_allows_is_kept():
+    assert apply_scene_edit(5.0, 0.0, 5.0, {"start": 4.7}) == (4.7, 5.0)     # 0.3s, despite floating point
+
+
 def test_an_edit_that_leaves_almost_nothing_is_ignored():
     assert apply_scene_edit(5.0, 0.4, 4.6, {"start": 3.0, "end": 3.1}) == (0.4, 4.6)
     assert apply_scene_edit(5.0, 0.4, 4.6, {"start": "x", "end": None}) == (0.4, 4.6)

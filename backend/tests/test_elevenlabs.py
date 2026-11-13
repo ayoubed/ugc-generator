@@ -258,7 +258,11 @@ def stitch(fake_db, monkeypatch):
     monkeypatch.setattr(jobs, "download_file", lambda ref, path: path)
     monkeypatch.setattr(jobs, "upload_file", lambda path, ref, content_type=None: ref)
     monkeypatch.setattr(jobs, "get_download_url", lambda ref: f"https://files.test/{ref}")
-    monkeypatch.setattr(jobs, "stitch_videos", lambda paths, out, **kwargs: seen.update(stitched={"paths": list(paths), **kwargs}))
+    def fake_stitch(paths, out, **kwargs):
+        seen.update(stitched={"paths": list(paths), **kwargs})
+        kwargs["report"]["cuts"] = [{"start": 0.4, "end": 4.6, "length": 5.0} for _ in paths]
+
+    monkeypatch.setattr(jobs, "stitch_videos", fake_stitch)
     monkeypatch.setattr(jobs, "revoiced_scene", lambda uid, pid, sid, attempt, path, voice, work: seen["revoiced"].append((sid, voice)) or f"revoiced_{sid}.mp4")
     monkeypatch.setattr(jobs, "caption_word_times", lambda ref, data, attempt, text, path, work, sid: seen["timed"].append(text) or [("w", 0.0, 0.5)])
 
@@ -335,3 +339,12 @@ def test_the_voice_list_reports_a_rejected_key(api, monkeypatch):
     response = api.get("/api/voices")
     assert response.status_code == 502
     assert "rejected its key" in response.json()["detail"]
+
+
+def test_the_version_records_what_was_kept_of_each_scene(stitch):
+    project, _ = stitch()
+    version = project["finalVideos"].values[-1]     # an ArrayUnion of the new version records
+    assert version["cuts"] == {
+        "0": {"start": 0.4, "end": 4.6, "length": 5.0, "attempt": 1},
+        "1": {"start": 0.4, "end": 4.6, "length": 5.0, "attempt": 1},
+    }
