@@ -3,7 +3,7 @@ import { deleteField } from 'firebase/firestore';
 import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
 import { useVoices } from '../hooks/useVoices';
-import { exportPackage, makeSound, previewVoice } from '../services/api';
+import { exportPackage, makeNarration, makeSound, previewVoice, removeNarration } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import {
   MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, previewGain, previewMusicGain, sceneEdit,
@@ -12,6 +12,9 @@ import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCar
 import {
   MAX_SOUNDS, SOUND_DEFAULT_VOLUME, SOUND_IDEAS, previewSoundGain, projectSounds, soundPlace, soundTime,
 } from '../utils/sounds';
+import {
+  PAUSE_HINT, changeNarration, narrationClock, narrationOverflow, narrationSpan, sceneNarration,
+} from '../utils/narration';
 import { revoicedUrl, voicePreviewState } from '../utils/voicePreview';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
 
@@ -28,6 +31,10 @@ const SAVE_DELAY_MS = 500;
  * A clip on the picture track is trimmed by dragging its edges, or with the Start and End fields
  * of the panel that opens when it is selected (the same thing, for the keyboard). The panel also
  * holds the scene's voice volume and mute; selecting the music bar shows its volume.
+ *
+ * A scene can get a narration: a voice made from its own text (which may differ from the script
+ * and the caption, and can hold [pause] marks) that replaces the sound of the take. It is a block
+ * on the Voice track: dragged to slide it against the picture, and trimmed in its panel.
  *
  * A caption block opens that scene's caption text, and the end card block its length; a second
  * line and length. The chosen voice is applied by the stitch, so the preview has each scene's own
@@ -81,6 +88,13 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const [soundSeconds, setSoundSeconds] = useState(0);   // 0 = the service picks the length
   const [makingSound, setMakingSound] = useState(false);
   const { available: soundsOffered } = useVoices();
+  // Narrations: one player each, the placements changed here and not yet back from the server,
+  // the texts being typed, and which scene's voice is being made.
+  const narrators = useRef({});
+  const narrationDrag = useRef(null);
+  const [narrationDrafts, setNarrationDrafts] = useState({});
+  const [narrationTexts, setNarrationTexts] = useState({});
+  const [makingVoice, setMakingVoice] = useState('');
   const scrubbing = useRef(false);
   const canvas = useRef(null);
   const [selected, setSelected] = useState(null); // { type: 'clip' | 'caption', id } | { type: 'music' | 'card' } | null
@@ -164,6 +178,94 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     pending.current[`edits.${scene.id}`] = null;
     flush(`edits.${scene.id}`);
   };
+  // ── Narration ───────────────────────────────────────────────────────────────────────────────
+  const narrationOf = (scene) => sceneNarration(project, scene, scene.id in narrationDrafts ? narrationDrafts[scene.id] : undefined);
+  const activeNarration = (scene) => {
+    const narration = narrationOf(scene);
+    return narration?.on && narration.url ? narration : null;
+  };
+  const placeNarration = (scene, field, value, { later = true } = {}) => {
+    const narration = narrationOf(scene);
+    if (!narration) return;
+    const next = changeNarration(narration, field, value, lengthOf(scene));
+    setNarrationDrafts((prev) => ({ ...prev, [scene.id]: next }));
+    if (later) saveSoon(`narration.${scene.id}`, next);
+    else {
+      pending.current[`narration.${scene.id}`] = next;
+      flush(`narration.${scene.id}`);
+    }
+  };
+  const narrationTextOf = (scene) => narrationTexts[scene.id] ?? scene.narration?.text ?? scene.script ?? '';
+  const handleMakeVoice = async (scene) => {
+    const text = narrationTextOf(scene).trim();
+    if (!text || makingVoice) return;
+    setError('');
+    setMakingVoice(scene.id);
+    try {
+      await makeNarration(project.id, scene.id, text);
+      // A new voice starts whole: the old trims were for the old recording.
+      const place = { at: narrationOf(scene)?.at || 0, trimStart: 0, trimEnd: 0, on: true };
+      setNarrationDrafts((prev) => ({ ...prev, [scene.id]: place }));
+      pending.current[`narration.${scene.id}`] = place;
+      flush(`narration.${scene.id}`);
+    } catch (err) {
+      console.error('Could not make the voice:', err);
+      setError(friendlyError(err));
+    } finally {
+      setMakingVoice('');
+    }
+  };
+  const handleRemoveVoice = async (scene) => {
+    setError('');
+    narrators.current[scene.id]?.pause?.();
+    try {
+      await removeNarration(project.id, scene.id);
+      setNarrationTexts((prev) => ({ ...prev, [scene.id]: undefined }));
+      setSelected({ type: 'clip', id: scene.id });
+    } catch (err) {
+      console.error('Could not remove the narration:', err);
+      setError(friendlyError(err));
+    }
+  };
+  const hearNarration = (scene) => {
+    const narration = narrationOf(scene);
+    const element = narrators.current[scene.id];
+    if (!narration || !element) return;
+    element.muted = false;
+    element.currentTime = narration.trimStart;
+    element.play?.()?.catch?.(() => {});
+  };
+  // Dragging the narration along the Voice track slides it against the picture; saved when let go.
+  const startNarrationDrag = (event, clip) => {
+    if (disabled) return;
+    const narration = narrationOf(clip.scene);
+    if (!narration) return;
+    narrationDrag.current = { id: clip.id, x: event.clientX, at: narration.at, moved: false };
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // without capture the drag still works while the pointer is over the block
+    }
+    setSelected({ type: 'voice', id: clip.id });
+  };
+  const moveNarrationDrag = (event, clip) => {
+    const held = narrationDrag.current;
+    if (!held || held.id !== clip.id || !Number.isFinite(event.clientX)) return;
+    if (!held.moved && Math.abs(event.clientX - held.x) < 3) return;   // a click, not a drag
+    held.moved = true;
+    const narration = narrationOf(clip.scene);
+    const next = changeNarration(narration, 'at', held.at + (event.clientX - held.x) / pps, lengthOf(clip.scene));
+    setNarrationDrafts((prev) => ({ ...prev, [clip.id]: next }));
+  };
+  const endNarrationDrag = (clip) => {
+    const held = narrationDrag.current;
+    narrationDrag.current = null;
+    if (held?.moved && held.id === clip.id && narrationDrafts[clip.id]) {
+      pending.current[`narration.${clip.id}`] = narrationDrafts[clip.id];
+      flush(`narration.${clip.id}`);
+    }
+  };
+
   const changeMusicVolume = (percent) => {
     setMusicDraft(percent);
     saveSoon('music.volume', percent);
@@ -298,7 +400,23 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // applied when the file is ready (a scene change loads another file).
   const seek = useRef({ clipTime: 0, token: 0 });
   const player = () => (current ? videos.current[current.id] || null : null);
-  const dub = () => (current && revoicedUrl(project, current.scene) ? dubs.current[current.id] || null : null);
+  // The scene on screen plays its narration, when it has one, in place of every other voice.
+  const narrated = () => (current ? activeNarration(current.scene) : null);
+  const narrator = () => (narrated() ? narrators.current[current.id] || null : null);
+  const dub = () => (current && !narrated() && revoicedUrl(project, current.scene) ? dubs.current[current.id] || null : null);
+  // Keeps the narration's player where the picture is: silent before it starts and after its kept part.
+  const syncNarration = (clipTime, { jump = false } = {}) => {
+    const narration = narrated();
+    const element = narrator();
+    if (!narration || !element) return;
+    const spot = narrationClock(narration, clipTime);
+    if (spot === null) {
+      if (!element.paused) element.pause?.();
+      return;
+    }
+    if (jump || element.paused || Math.abs(element.currentTime - spot) > VOICE_DRIFT_SECONDS) element.currentTime = spot;
+    if (playing && element.paused !== false) element.play?.()?.catch?.(() => {});
+  };
   // How loud the scene on screen is: its own sound, or the chosen voice in its place.
   const applySound = () => {
     const element = player();
@@ -306,8 +424,13 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     const edit = editOf(current.scene);
     const level = previewGain(edit?.volume); // 100% plays below full, so a boost is heard too
     const voiceOver = dub();
-    element.muted = Boolean(edit?.muted) || Boolean(voiceOver);
+    const told = narrator();
+    element.muted = Boolean(edit?.muted) || Boolean(voiceOver) || Boolean(narrated());
     element.volume = level;
+    if (told) {
+      told.muted = Boolean(edit?.muted);
+      told.volume = level;
+    }
     if (voiceOver) {
       voiceOver.muted = Boolean(edit?.muted);
       voiceOver.volume = level;
@@ -324,6 +447,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       voiceOver.currentTime = seek.current.clipTime;
       if (playing) voiceOver.play?.()?.catch?.(() => {});
     }
+    syncNarration(seek.current.clipTime, { jump: true });
   };
   const quietSounds = () => {
     started.current = new Set();
@@ -344,6 +468,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     setPlaying(false);
     Object.values(videos.current).forEach((element) => element?.pause?.());
     Object.values(dubs.current).forEach((element) => element?.pause?.());
+    Object.values(narrators.current).forEach((element) => element?.pause?.());
     audio.current?.pause?.();
     quietSounds();
   };
@@ -359,6 +484,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     if (!playing) return;
     player()?.play?.()?.catch?.(() => {});
     dub()?.play?.()?.catch?.(() => {});
+    if (player()) syncNarration(player().currentTime);
     track?.play?.()?.catch?.(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, musicPercent]);
@@ -368,6 +494,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   useEffect(() => {
     Object.entries(videos.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
     Object.entries(dubs.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
+    Object.entries(narrators.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
     const element = currentId ? videos.current[currentId] : null;
     if (element && element.readyState >= 1) applySeek();   // not loaded yet: its loadedmetadata does it
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -376,10 +503,13 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // A volume or mute change is heard at once, also while playing, and so is a voice that just got ready.
   const currentEdit = current ? editOf(current.scene) : null;
   const currentDubUrl = current ? revoicedUrl(project, current.scene) : '';
+  const currentNarration = current ? activeNarration(current.scene) : null;
   useEffect(() => {
     applySound();
+    // A narration switched off or removed while it sounds goes quiet at once.
+    if (!currentNarration && currentId) narrators.current[currentId]?.pause?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId, currentEdit?.volume, currentEdit?.muted, currentDubUrl]);
+  }, [currentId, currentEdit?.volume, currentEdit?.muted, currentDubUrl, currentNarration?.url]);
 
   // The voice chosen for the whole video, prepared so it can be heard here.
   const voice = projectVoice(project);
@@ -449,6 +579,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       lastResync.current = nowMs;
       voiceOver.currentTime = element.currentTime;
     }
+    syncNarration(element.currentTime);
     // A sound effect starts when the playhead reaches it (or part-way in, when playing from its middle).
     const now = timelineTime(timeline, place.index, element.currentTime);
     heardSounds.forEach((sound) => {
@@ -539,6 +670,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const captionScene = selected?.type === 'caption' ? ready.find(({ scene }) => scene.id === selected.id) : null;
   const cardOn = endCard.enabled && Boolean(endCard.imageRef);
   const chosenSound = selected?.type === 'sound' ? sounds.find((sound) => sound.id === selected.id) : null;
+  const voiceClip = selected?.type === 'voice' ? timeline.clips.find((clip) => clip.id === selected.id) : null;
+  const voiceNarration = voiceClip ? narrationOf(voiceClip.scene) : null;
+  const voiceOverflow = voiceClip && voiceNarration ? narrationOverflow(voiceClip, voiceNarration) : 0;
   const addingSound = selected?.type === 'newSound' && soundsOffered;
   const showSounds = soundsOffered || sounds.length > 0;
 
@@ -627,6 +761,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             />
           ) : null))}
           {timeline.clips.map((clip) => {
+            const narration = narrationOf(clip.scene);
+            return narration?.url ? (
+              <audio
+                key={clip.id} ref={(element) => { narrators.current[clip.id] = element; }} src={narration.url} preload="auto"
+                aria-hidden="true" data-testid={`narration-${clip.id}`}
+              />
+            ) : null;
+          })}
+          {timeline.clips.map((clip) => {
             const url = revoicedUrl(project, clip.scene);
             return url ? (
               <audio
@@ -679,8 +822,84 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                   type="checkbox" id={`${baseId}-mute`} checked={Boolean(chosenEdit?.muted)} disabled={disabled}
                   onChange={(e) => change(chosen.scene, 'muted', e.target.checked)}
                 />
-                Mute this scene&apos;s own sound
+                {narrationOf(chosen.scene)?.on ? 'Mute this scene' : "Mute this scene's own sound"}
               </label>
+              {soundsOffered && (
+                <button type="button" className="link-button" onClick={() => setSelected({ type: 'voice', id: chosen.id })} disabled={disabled}>
+                  {narrationOf(chosen.scene) ? "Open this scene's narration" : 'Make a voice for this scene from text'}
+                </button>
+              )}
+            </>
+          )}
+          {voiceClip && (
+            <>
+              <div className="editor-inspector-head">
+                <h3 className="editor-inspector-title">Narration: scene {voiceClip.label}</h3>
+                {voiceNarration && (
+                  <button type="button" className="link-button" onClick={() => handleRemoveVoice(voiceClip.scene)} disabled={disabled}>Remove</button>
+                )}
+              </div>
+              <label className="visually-hidden" htmlFor={`${baseId}-narration-text`}>What the voice says</label>
+              <textarea
+                id={`${baseId}-narration-text`} className="textarea" rows={3} maxLength={1200}
+                value={narrationTextOf(voiceClip.scene)} disabled={disabled || makingVoice === voiceClip.id}
+                placeholder="What the voice says"
+                onChange={(e) => setNarrationTexts((prev) => ({ ...prev, [voiceClip.id]: e.target.value }))}
+              />
+              <p className="field-hint">
+                {PAUSE_HINT} This text is the voice&apos;s own: the script and the caption stay as they are.
+              </p>
+              <div className="editor-sound-make">
+                <button
+                  type="button" className="btn btn-primary btn-sm" onClick={() => handleMakeVoice(voiceClip.scene)}
+                  disabled={disabled || Boolean(makingVoice) || !voice || !narrationTextOf(voiceClip.scene).trim()}
+                >
+                  {makingVoice === voiceClip.id
+                    ? <LoadingSpinner size="sm" label="Making the voice…" />
+                    : voiceNarration ? 'Make the voice again' : 'Make the voice'}
+                </button>
+                {voiceNarration && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => hearNarration(voiceClip.scene)}>Listen</button>
+                )}
+              </div>
+              {!voice && <p className="field-hint">Choose a voice in the Voice card first: the narration is read in it.</p>}
+              {voiceNarration && (
+                <>
+                  <div className="editor-fields">
+                    <label htmlFor={`${baseId}-narration-at`}>Starts at</label>
+                    <input
+                      id={`${baseId}-narration-at`} className="input" type="number" min={0} max={lengthOf(voiceClip.scene)} step={0.1}
+                      value={voiceNarration.at} disabled={disabled}
+                      onChange={(e) => placeNarration(voiceClip.scene, 'at', Number(e.target.value))}
+                    />
+                    <label htmlFor={`${baseId}-narration-trim-start`}>Cut from its start</label>
+                    <input
+                      id={`${baseId}-narration-trim-start`} className="input" type="number" min={0} max={voiceNarration.seconds} step={0.1}
+                      value={voiceNarration.trimStart} disabled={disabled}
+                      onChange={(e) => placeNarration(voiceClip.scene, 'trimStart', Number(e.target.value))}
+                    />
+                    <label htmlFor={`${baseId}-narration-trim-end`}>Cut from its end</label>
+                    <input
+                      id={`${baseId}-narration-trim-end`} className="input" type="number" min={0} max={voiceNarration.seconds} step={0.1}
+                      value={voiceNarration.trimEnd} disabled={disabled}
+                      onChange={(e) => placeNarration(voiceClip.scene, 'trimEnd', Number(e.target.value))}
+                    />
+                  </div>
+                  <label className="gen-run-option" htmlFor={`${baseId}-narration-on`}>
+                    <input
+                      type="checkbox" id={`${baseId}-narration-on`} checked={voiceNarration.on} disabled={disabled}
+                      onChange={(e) => placeNarration(voiceClip.scene, 'on', e.target.checked, { later: false })}
+                    />
+                    Use this voice in place of the scene&apos;s own sound
+                  </label>
+                  <p className={`field-hint ${voiceOverflow > 0 ? 'is-warning' : ''}`} role="status">
+                    {voiceOverflow > 0
+                      ? `The voice is ${voiceNarration.length.toFixed(1)}s and runs ${voiceOverflow.toFixed(1)}s past the end of the scene: that part is not heard. Start it earlier, cut it, or shorten the text.`
+                      : `The voice is ${voiceNarration.length.toFixed(1)}s and fits the scene (${voiceClip.length.toFixed(1)}s). Drag it on the Voice track to slide it against the picture.`}
+                    {voiceNarration.voiceName && ` Read by ${voiceNarration.voiceName}.`}
+                  </p>
+                </>
+              )}
             </>
           )}
           {selected?.type === 'music' && music && (
@@ -807,7 +1026,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               </p>
             </>
           )}
-          {!chosen && !captionScene && !addingSound && !chosenSound && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
+          {!chosen && !voiceClip && !captionScene && !addingSound && !chosenSound && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
             <p className="field-hint">
               Select a clip to trim it or change its volume, a caption to change its text, or the music for its volume.
               Drag a clip&apos;s edges to cut its start or end, and drag on the ruler to move the playhead.
@@ -896,6 +1115,34 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               {timeline.clips.map((clip) => {
                 const edit = editOf(clip.scene);
                 const level = edit?.muted ? 0 : Math.min(MAX_SCENE_VOLUME, edit?.volume ?? 1) / MAX_SCENE_VOLUME;
+                const narration = activeNarration(clip.scene);
+                if (narration) {
+                  // The narration in place of the take's voice: where it is heard, and draggable.
+                  const span = narrationSpan(clip, narration);
+                  const isSelected = voiceClip?.id === clip.id;
+                  return (
+                    <button
+                      key={clip.id} type="button"
+                      className={`tl-block is-voice is-narration ${edit?.muted ? 'is-muted' : ''} ${isSelected ? 'is-selected' : ''}`}
+                      style={{
+                        left: `${(span ? span.time : clip.at) * pps}px`,
+                        width: `${Math.max(MIN_SOUND_WIDTH, (span ? span.length : 0) * pps)}px`,
+                      }}
+                      title="Narration. Drag to slide it against the picture."
+                      aria-pressed={isSelected}
+                      aria-label={`Narration of scene ${clip.label}: ${span ? `at ${clock(span.time, true)}, ${span.length.toFixed(1)} seconds` : 'not heard'}`}
+                      onClick={() => setSelected({ type: 'voice', id: clip.id })}
+                      onPointerDown={(event) => startNarrationDrag(event, clip)}
+                      onPointerMove={(event) => moveNarrationDrag(event, clip)}
+                      onPointerUp={() => endNarrationDrag(clip)}
+                      onPointerCancel={() => endNarrationDrag(clip)}
+                    >
+                      <span className="tl-block-text">
+                        {span ? `Narration${narration.voiceName ? ` · ${narration.voiceName}` : ''}` : 'Narration (not heard)'}
+                      </span>
+                    </button>
+                  );
+                }
                 return (
                   <button
                     key={clip.id} type="button" tabIndex={-1}

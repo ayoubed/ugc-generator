@@ -3418,6 +3418,13 @@ button.tl-block { cursor: pointer; }
 .tl-block-text { position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tl-block.is-selected { border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent) inset; }
 .tl-block.is-voice { background: var(--bg-surface); color: var(--text-primary); }
+.tl-block.is-narration {
+  background: var(--color-accent-light);
+  border-color: var(--color-accent-border);
+  cursor: grab;
+  touch-action: none;
+}
+.field-hint.is-warning { color: var(--color-warning-text); }
 .tl-level { position: absolute; left: 0; right: 0; bottom: 0; background: var(--color-accent-light); border-top: 1px solid var(--color-accent-border); }
 .tl-block.is-muted { background: repeating-linear-gradient(135deg, var(--bg-hover) 0 6px, var(--bg-field) 6px 12px); color: var(--text-tertiary); }
 .tl-block.is-caption { background: var(--bg-surface); }

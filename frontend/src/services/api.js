@@ -414,3 +414,20 @@ export function removeStoryboardFrame(projectId, sceneId, frameId) {
 export function editEndCard(projectId, instruction) {
   return callApi(`/api/projects/${projectId}/end-card/edit`, { body: { instruction: instruction.trim() }, fallback: 'Could not change the end card' });
 }
+
+/**
+ * Read a text aloud in the voice chosen for the video and make it the scene's narration (the
+ * scene's script when `text` is left out). Returns { text, voiceName, url, seconds, ... }; the
+ * scene updates too.
+ */
+export function makeNarration(projectId, sceneId, text = null) {
+  return callApi(`/api/projects/${projectId}/scenes/${sceneId}/narration`, {
+    body: text === null ? { } : { text },
+    fallback: 'Could not make the voice',
+  });
+}
+
+/** Remove a scene's narration: it plays the sound of its own take again. */
+export function removeNarration(projectId, sceneId) {
+  return callApi(`/api/projects/${projectId}/scenes/${sceneId}/narration`, { method: 'DELETE', fallback: 'Could not remove the narration' });
+}

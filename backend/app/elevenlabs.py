@@ -12,6 +12,7 @@ voices and caption timing is estimated.
 """
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -123,6 +124,58 @@ def change_voice(audio_path: str, voice_id: str, output_path: str) -> str:
             data={"model_id": VOICE_CHANGER_MODEL, "remove_background_noise": "true"},
             files={"audio": (os.path.basename(audio_path), audio, "audio/mpeg")},
         )
+    if not response.content:
+        raise VoiceServiceError("The voice service returned no audio. Try again.")
+    with open(output_path, "wb") as out:
+        out.write(response.content)
+    return output_path
+
+
+# Reads a text aloud (narration). This model understands <break time="1.0s" /> pauses.
+SPEECH_MODEL = "eleven_multilingual_v2"
+SPEECH_MAX_CHARACTERS = 1200
+PAUSE_DEFAULT_SECONDS, PAUSE_MAX_SECONDS = 0.6, 3.0
+# What the user types for a pause: [pause] or [pause 1.5]
+_PAUSE = re.compile(r"\[\s*pause(?:\s+(\d+(?:[.,]\d+)?))?\s*s?\s*\]", re.IGNORECASE)
+
+
+def without_pauses(text: str) -> str:
+    """The text as it reads, with the [pause] marks taken out."""
+    return " ".join(_PAUSE.sub(" ", text or "").split())
+
+
+def speech_markup(text: str) -> str:
+    """
+    The text as sent to the voice service: every [pause] or [pause 1.5] becomes a break of that
+    many seconds (0.6 when not given, 3 at most), and anything that looks like a tag is taken out
+    so typed text can never be read as markup.
+    """
+    def as_break(match: "re.Match") -> str:
+        try:
+            seconds = float((match.group(1) or "").replace(",", ".")) if match.group(1) else PAUSE_DEFAULT_SECONDS
+        except ValueError:
+            seconds = PAUSE_DEFAULT_SECONDS
+        seconds = min(PAUSE_MAX_SECONDS, max(0.1, seconds))
+        return f' \x00{seconds:.1f}\x00 '
+
+    marked = _PAUSE.sub(as_break, text or "")
+    marked = marked.replace("<", " ").replace(">", " ")
+    marked = re.sub(r"\x00(\d\.\d)\x00", r'<break time="\1s" />', marked)
+    return " ".join(marked.split())
+
+
+def speak(text: str, voice_id: str, output_path: str) -> str:
+    """Reads `text` aloud in `voice_id` and writes an MP3. [pause] marks become silences."""
+    markup = speech_markup(text)
+    if not without_pauses(text):
+        raise VoiceServiceError("There is no text to read aloud.")
+    response = _request(
+        "POST",
+        f"/v1/text-to-speech/{voice_id}",
+        "Making the voice",
+        params={"output_format": "mp3_44100_128"},
+        json={"text": markup, "model_id": SPEECH_MODEL},
+    )
     if not response.content:
         raise VoiceServiceError("The voice service returned no audio. Try again.")
     with open(output_path, "wb") as out:

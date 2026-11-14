@@ -128,6 +128,19 @@ describe('final videos', () => {
     expect(finalVideoChangeReason(stitched, changed)).toBe('Scene 2 uses a different take than this version.');
   });
 
+  it('notices a narration that was made, moved or switched off since', () => {
+    const made = { storageRef: 'n.mp3', seconds: 4 };
+    const told = [{ ...scenes[0], narration: made }, scenes[1]];
+    const id = scenes[0].id;
+    const then = { ...stitched, narration: { [id]: 'narration:n.mp3:0.00:0.00:0.00' } };
+    const reason = 'The narration changed since this version was stitched.';
+    expect(finalVideoChangeReason(then, told, { settings: {} })).toBe('');
+    expect(finalVideoChangeReason(then, told, { settings: { narration: { [id]: { at: 1 } } } })).toBe(reason);
+    expect(finalVideoChangeReason(then, told, { settings: { narration: { [id]: { on: false } } } })).toBe(reason);
+    expect(finalVideoChangeReason({ ...stitched, narration: {} }, told, { settings: {} })).toBe(reason);
+    expect(finalVideoChangeReason(stitched, told, { settings: {} })).toBe('');     // stitched before narrations existed
+  });
+
   it('notices skipped scenes, music, captions and the end card', () => {
     expect(finalVideoChangeReason(stitched, [scenes[0], { ...scenes[1], skipped: true }])).toContain('added, removed, skipped');
     const music = { source: 'upload', storageRef: 'm.mp3', volume: 'low' };

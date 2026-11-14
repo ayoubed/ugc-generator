@@ -35,7 +35,7 @@ from app.pipeline import (
     asset_bible_lines,
     GenerationCancelled,
 )
-from app.voiceover import caption_word_times, project_voice, revoiced_scene
+from app.voiceover import caption_word_times, narrated_scene, project_voice, revoiced_scene, scene_narration
 
 logger = logging.getLogger(__name__)
 
@@ -1096,17 +1096,41 @@ def _run_stitch_job_sync(
                 "One voice is chosen for this video, but the voice service is not set up on the server. "
                 "Choose \"Each scene's own voice\" on the Video step to stitch without it."
             )
+        # A scene with a narration (a voice made from text in the editor) gets it as its only sound,
+        # first: captions are timed on it, pauses are cut around it and the music dips under it.
+        narrations: Dict[str, Dict[str, Any]] = {}
+        for position, (_, doc_id, data) in enumerate(scenes_list):
+            narration = scene_narration(project_data, doc_id, data)
+            if not narration:
+                continue
+            _assert_owned_path(uid, narration["storageRef"], "narration")
+            narration_local = os.path.join(temp_dir, f"narration_{doc_id}.mp3")
+            try:
+                download_file(narration["storageRef"], narration_local)
+            except Exception as e:
+                raise ValueError(
+                    f"Could not load the narration of scene {scene_numbers[position]}. Make it again in the editor."
+                ) from e
+            local_video_paths[position] = narrated_scene(
+                local_video_paths[position], narration_local, narration, os.path.join(temp_dir, f"narrated_{doc_id}.mp4")
+            )
+            narrations[doc_id] = narration
+
         caption_words: List[Any] = [None] * len(scenes_list)
         if captions and elevenlabs.is_configured():
             # Timed on the scene's own audio: re-voicing keeps the timing, and this way the result
             # is reused whatever voice is chosen later.
             for position, (_, doc_id, data) in enumerate(scenes_list):
                 caption_words[position] = caption_word_times(
-                    project_ref.collection("scenes").document(doc_id), data, data.get("activeAttempt"),
+                    project_ref.collection("scenes").document(doc_id), data,
+                    # With a narration the words are where the narration says them, not the take.
+                    narrations[doc_id]["key"] if doc_id in narrations else data.get("activeAttempt"),
                     caption_texts[doc_id], local_video_paths[position], temp_dir, doc_id,
                 )
         if voice:
             for position, (_, doc_id, data) in enumerate(scenes_list):
+                if doc_id in narrations:
+                    continue   # already in the voice it was made with
                 local_video_paths[position] = revoiced_scene(
                     uid, project_id, doc_id, data.get("activeAttempt"), local_video_paths[position], voice["id"], temp_dir
                 )
@@ -1185,6 +1209,8 @@ def _run_stitch_job_sync(
             "captionTexts": caption_texts if captions else {},
             "captionTiming": ("exact" if exact_timing else "estimated") if captions else None,
             "tightCuts": tight_cuts,
+            # The narrations this version was made with, per scene id (what was heard and where).
+            "narration": {doc_id: narration["key"] for doc_id, narration in narrations.items()},
             # The one voice this version was re-voiced to (None = each scene's own voice).
             "voice": voice,
             # The editor's trims, mutes and volumes this version was cut with, per scene id.

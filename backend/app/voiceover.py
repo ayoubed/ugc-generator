@@ -125,3 +125,77 @@ def caption_word_times(
     except Exception as e:
         logger.warning("Exact caption timing for scene %s failed, estimating instead: %s", scene_id, e)
         return None
+
+
+# --- narration: a voice made from text, in place of the scene's own sound ---------------------------
+#
+# scene.narration = {text, voiceId, voiceName, storageRef, url, seconds}   (made by the server)
+# settings.narration.<scene id> = {at, trimStart, trimEnd, on}             (set in the editor)
+# `at` is where the voice starts, in seconds of the scene's clip; the trims cut the voice's own
+# start and end. The voice must stay inside its scene: what would run past the clip's end is cut.
+
+NARRATION_MIN_SECONDS = 0.1
+
+
+def _number(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number == number and number > 0 else 0.0   # NaN and negatives count as 0
+
+
+def scene_narration(
+    project_data: Optional[Dict[str, Any]], scene_id: str, scene_data: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """
+    The scene's narration as the stitch uses it ({storageRef, seconds, at, trimStart, trimEnd, key}),
+    or None when it has none or it is switched off. `key` changes whenever what is heard changes.
+    """
+    made = (scene_data or {}).get("narration")
+    if not isinstance(made, dict) or not made.get("storageRef"):
+        return None
+    seconds = _number(made.get("seconds"))
+    if seconds < NARRATION_MIN_SECONDS:
+        return None
+    placed = (((project_data or {}).get("settings") or {}).get("narration") or {}).get(str(scene_id))
+    placed = placed if isinstance(placed, dict) else {}
+    if placed.get("on") is False:
+        return None
+    trim_start = min(_number(placed.get("trimStart")), seconds - NARRATION_MIN_SECONDS)
+    trim_end = min(_number(placed.get("trimEnd")), seconds - NARRATION_MIN_SECONDS - trim_start)
+    at = _number(placed.get("at"))
+    return {
+        "storageRef": made["storageRef"],
+        "seconds": seconds,
+        "at": round(at, 3),
+        "trimStart": round(trim_start, 3),
+        "trimEnd": round(max(0.0, trim_end), 3),
+        "key": f"narration:{made['storageRef']}:{at:.2f}:{trim_start:.2f}:{max(0.0, trim_end):.2f}",
+    }
+
+
+def narration_filter(narration: Dict[str, Any]) -> str:
+    """The ffmpeg filter that cuts the voice to its kept part and starts it at its place in the clip."""
+    end = narration["seconds"] - narration["trimEnd"]
+    delay = int(round(narration["at"] * 1000))
+    return (
+        f"[1:a]atrim=start={narration['trimStart']:.3f}:end={end:.3f},asetpts=PTS-STARTPTS,"
+        f"adelay={delay}:all=1,apad[voice]"
+    )
+
+
+def narrated_scene(video_path: str, narration_path: str, narration: Dict[str, Any], output_path: str) -> str:
+    """
+    The same picture (copied, not re-encoded) with the narration as its only sound, as long as the
+    clip. The scene's own sound is dropped: it would carry the video model's own voice.
+    """
+    duration = float(probe_media(video_path)["duration"])
+    _run_ffmpeg(
+        ["ffmpeg", "-y", "-i", video_path, "-i", narration_path, "-filter_complex", narration_filter(narration),
+         "-map", "0:v:0", "-map", "[voice]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+         "-t", f"{max(0.05, duration):.3f}", output_path],
+        "Putting the narration on the scene",
+    )
+    return output_path
+

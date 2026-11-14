@@ -1,5 +1,6 @@
 import { currentEdits, sameEdits } from './edits';
 import { sameSounds } from './sounds';
+import { narrationKey } from './narration';
 // Shared helpers that describe where a project is in the journey (scenes, takes, final videos).
 import { projectSceneAudio } from '../data/guidelineTags';
 import { sameAssetBible } from './assetBible';
@@ -471,6 +472,11 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
         ? [finalVideo.endCard.imageRef, finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
         : '';
       if (now !== then) return 'The end card changed since this version was stitched.';
+    }
+    // Versions stitched before narrations existed have no narration field, so they aren't flagged.
+    if (finalVideo.narration && typeof finalVideo.narration === 'object') {
+      const changed = (scenes || []).some((s) => !isSceneSkipped(s) && (finalVideo.narration[s.id] || '') !== narrationKey(project, s));
+      if (changed) return 'The narration changed since this version was stitched.';
     }
     // Same for the editor: only versions that recorded their edits can be compared.
     if ('edits' in finalVideo && !sameEdits(finalVideo.edits, currentEdits(project, scenes))) {

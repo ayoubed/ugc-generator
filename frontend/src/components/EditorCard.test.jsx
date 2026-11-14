@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import userEvent from '@testing-library/user-event';
 import EditorCard from './EditorCard';
 import { updateProjectSettings } from '../hooks/useProject';
-import { exportPackage, makeSound, previewVoice } from '../services/api';
+import { exportPackage, makeNarration, makeSound, previewVoice, removeNarration } from '../services/api';
 
 // Sound effects are offered when the voice service is set up; a test switches it off to check that.
 const voiceService = { available: true };
@@ -14,6 +14,8 @@ vi.mock('../services/api', () => ({
   exportPackage: vi.fn(async () => ({})),
   previewVoice: vi.fn(async () => ({})),
   makeSound: vi.fn(async () => ({})),
+  makeNarration: vi.fn(async () => ({})),
+  removeNarration: vi.fn(async () => ({})),
 }));
 vi.mock('firebase/firestore', () => ({ deleteField: () => 'DELETE' }));
 
@@ -742,5 +744,145 @@ describe('sound effects', () => {
   it('can sit on the end card', () => {
     show({ settings: { endCard: { enabled: true, imageRef: 'card.png', seconds: 3 }, sounds: { d: { ...WHOOSH, name: 'Ding', sceneId: 'end', at: 0.5 } } } });
     expect(left(sound('Ding'))).toBe(`${10.5 * PPS}px`);
+  });
+});
+
+describe('narration: a voice made from text', () => {
+  const VOICE = { id: 'v1', name: 'Sarah' };
+  const MADE = { text: 'Line 0, read aloud.', voiceName: 'Sarah', storageRef: 'n0.mp3', url: 'https://files.test/n0.mp3', seconds: 3 };
+  const narrated = (settings = {}) => show({ settings: { voice: VOICE, ...settings }, scenes: list(scene('0', { narration: MADE }), scene('1')) });
+  const block = () => track('Voice track').getByRole('button', { name: /^Narration of scene 1/ });
+  const current = () => screen.getByLabelText(/^Preview: scene/);
+  const at = (element, seconds) => Object.defineProperty(element, 'currentTime', { value: seconds, configurable: true, writable: true });
+
+  it('is offered from a scene, starting from its script', async () => {
+    show({ settings: { voice: VOICE } });
+    await userEvent.click(clip(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Make a voice for this scene from text' }));
+    expect(screen.getByRole('heading', { name: 'Narration: scene 1' })).toBeTruthy();
+    expect(screen.getByLabelText('What the voice says').value).toBe('Line 0.');
+    expect(screen.queryByLabelText('Starts at')).toBeNull();           // nothing to place before a voice exists
+  });
+
+  it('makes the voice from its own text, with pauses, and places it whole', async () => {
+    show({ settings: { voice: VOICE } });
+    await userEvent.click(clip(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Make a voice for this scene from text' }));
+    const box = screen.getByLabelText('What the voice says');
+    fireEvent.change(box, { target: { value: 'Line 0. [pause 1] Really.' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Make the voice' }));
+    expect(makeNarration).toHaveBeenCalledWith('p1', '0', 'Line 0. [pause 1] Really.');
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 0, trimStart: 0, trimEnd: 0, on: true } }]));
+  });
+
+  it('needs a voice chosen for the video', async () => {
+    show();
+    await userEvent.click(clip(1));
+    await userEvent.click(screen.getByRole('button', { name: 'Make a voice for this scene from text' }));
+    expect(screen.getByRole('button', { name: 'Make the voice' }).disabled).toBe(true);
+    expect(screen.getByText(/Choose a voice in the Voice card first/)).toBeTruthy();
+  });
+
+  it('is not offered without the voice service', async () => {
+    voiceService.available = false;
+    show();
+    await userEvent.click(clip(1));
+    expect(screen.queryByRole('button', { name: 'Make a voice for this scene from text' })).toBeNull();
+  });
+
+  it('sits on the Voice track where it is heard, in place of the take\'s voice', () => {
+    narrated({ narration: { 0: { at: 1 } } });
+    expect([left(block()), width(block())]).toEqual([`${1 * PPS}px`, `${3 * PPS}px`]);
+    expect(block().getAttribute('aria-label')).toBe('Narration of scene 1: at 0:01.0, 3.0 seconds');
+    expect(track('Voice track').getByText('Narration · Sarah')).toBeTruthy();
+    expect(track('Voice track').getByText(/^100%/)).toBeTruthy();        // scene 2 keeps its own voice
+  });
+
+  it('opens its panel: says that it fits, and slides and trims with numbers', async () => {
+    narrated();
+    await userEvent.click(block());
+    expect(screen.getByLabelText('What the voice says').value).toBe('Line 0, read aloud.');
+    expect(screen.getByText(/The voice is 3\.0s and fits the scene \(5\.0s\)/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Starts at'), { target: { value: '1.5' } });
+    expect(left(block())).toBe(`${1.5 * PPS}px`);
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 1.5, trimStart: 0, trimEnd: 0, on: true } }]), { timeout: 2000 });
+    fireEvent.change(screen.getByLabelText('Cut from its end'), { target: { value: '1' } });
+    expect(width(block())).toBe(`${2 * PPS}px`);
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 1.5, trimStart: 0, trimEnd: 1, on: true } }]), { timeout: 2000 });
+  });
+
+  it('warns when the voice runs past the end of the scene', async () => {
+    narrated({ narration: { 0: { at: 3 } } });
+    await userEvent.click(block());
+    expect(screen.getByText(/runs 1\.0s past the end of the scene/)).toBeTruthy();
+    expect(width(block())).toBe(`${2 * PPS}px`);                          // only the part that is heard
+  });
+
+  it('slides against the picture when dragged, and is saved when let go', async () => {
+    narrated();
+    fireEvent.pointerDown(block(), { clientX: 100, pointerId: 1 });
+    fireEvent.pointerMove(block(), { clientX: 100 + 1 * PPS, pointerId: 1 });
+    expect(left(block())).toBe(`${1 * PPS}px`);
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+    fireEvent.pointerUp(block(), { pointerId: 1 });
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 1, trimStart: 0, trimEnd: 0, on: true } }]));
+  });
+
+  it('a click without a drag only selects it', () => {
+    narrated();
+    fireEvent.pointerDown(block(), { clientX: 100, pointerId: 1 });
+    fireEvent.pointerUp(block(), { pointerId: 1 });
+    expect(screen.getByRole('heading', { name: 'Narration: scene 1' })).toBeTruthy();
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+  });
+
+  it('is what the preview plays for its scene: the take is silenced', () => {
+    narrated({ narration: { 0: { at: 1, trimStart: 0.5 } } });
+    const voice = screen.getByTestId('narration-0');
+    expect(voice.getAttribute('src')).toBe('https://files.test/n0.mp3');
+    fireEvent.loadedMetadata(current());
+    expect(current().muted).toBe(true);
+    expect(voice.muted).toBe(false);
+    expect(screen.queryByTestId('narration-1')).toBeNull();
+  });
+
+  it('follows the picture: silent before it starts, then from the right moment', async () => {
+    narrated({ narration: { 0: { at: 1, trimStart: 0.5 } } });
+    const voice = screen.getByTestId('narration-0');
+    voice.play = vi.fn(async () => {});
+    voice.pause = vi.fn();
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    at(current(), 0.5);
+    fireEvent.timeUpdate(current());
+    expect(voice.play).not.toHaveBeenCalled();                            // the voice starts at 1s
+    at(current(), 2);
+    fireEvent.timeUpdate(current());
+    expect(voice.currentTime).toBe(1.5);                                  // 1s in, plus the 0.5s cut from its start
+    expect(voice.play).toHaveBeenCalled();
+  });
+
+  it('can be switched off, which brings the take\'s own voice back', async () => {
+    narrated();
+    await userEvent.click(block());
+    await userEvent.click(screen.getByLabelText("Use this voice in place of the scene's own sound"));
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 0, trimStart: 0, trimEnd: 0, on: false } }]));
+    expect(track('Voice track').queryByRole('button', { name: /^Narration of scene 1/ })).toBeNull();
+    expect(track('Voice track').getAllByText(/^100%/).length).toBe(2);
+  });
+
+  it('is removed from its panel', async () => {
+    narrated();
+    await userEvent.click(block());
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(removeNarration).toHaveBeenCalledWith('p1', '0');
+  });
+
+  it('says why when the voice could not be made', async () => {
+    makeNarration.mockRejectedValueOnce(new Error('The voice service is busy. Wait a minute and try again.'));
+    narrated();
+    await userEvent.click(block());
+    await userEvent.click(screen.getByRole('button', { name: 'Make the voice again' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/busy/);
+    expect(updateProjectSettings).not.toHaveBeenCalled();
   });
 });
