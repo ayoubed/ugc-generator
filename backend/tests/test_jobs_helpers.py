@@ -235,3 +235,15 @@ def test_the_idea_reaches_a_scene_only_when_there_is_no_video_context():
     with_context = jobs.build_global_context({"idea": idea, "settings": {"videoContext": "A narrator over watch shots."}})
     assert not any("We broke all three" in p for p in with_context)
     assert jobs.build_global_context({"idea": idea, "settings": {}}) == [f"Global Video Idea: {idea}"]
+
+
+def test_a_product_led_scene_starting_from_the_product_photo_gets_no_first_frame():
+    product_led = {"settings": {"videoType": "product"}}
+    refs = [{"path": "watch.jpg", "description": "The watch"}]
+    assert jobs.starts_without_first_frame(product_led, "creator", refs) is True
+    # Its own start picture, the previous scene's last frame, or no reference to draw the product from.
+    assert jobs.starts_without_first_frame(product_led, "uploaded", refs) is False
+    assert jobs.starts_without_first_frame(product_led, "last_frame", refs) is False
+    assert jobs.starts_without_first_frame(product_led, "creator", []) is False
+    # A video with a presenter starts on the presenter's photo, as before.
+    assert jobs.starts_without_first_frame({"settings": {}}, "creator", refs) is False

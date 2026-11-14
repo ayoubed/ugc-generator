@@ -300,6 +300,18 @@ def start_picture_ref(project_data: Optional[Dict[str, Any]]) -> str:
     return ""
 
 
+def starts_without_first_frame(project_data: Optional[Dict[str, Any]], image_source: str, reference_images: Any) -> bool:
+    """
+    Whether a new take is made with no first frame, from the prompt and the reference pictures only.
+
+    True for a product-led scene that starts "from the product photo". Used as the first frame, a
+    photo where the product fills the picture makes the model keep it that big, so a hand next to
+    it comes out tiny (a watch the size of a palm). The photo is among the reference pictures,
+    which is enough to draw the product; without any reference picture the photo stays the start.
+    """
+    return is_product_led(project_data) and image_source == "creator" and bool(reference_images)
+
+
 def missing_start_picture_message(project_data: Optional[Dict[str, Any]]) -> str:
     if is_product_led(project_data):
         return "No product picture found. Add one on the Idea step, or choose another starting picture."
@@ -815,9 +827,11 @@ def _run_video_generation_job_sync(
                     logger.warning("Heartbeat for take %s of scene %s failed: %s", attempt, scene_index, beat_err)
             return False
 
+        product_photo_start = starts_without_first_frame(project_data, image_source, reference_images)
+
         _, interaction_id, sent_prompt = generate_scene_video(
             prompt=prompt,
-            image_path=starting_image_path,
+            image_path=None if product_photo_start else starting_image_path,
             output_path=local_output_video,
             aspect_ratio=config.get("aspect_ratio", "9:16"),
             duration_seconds=duration_seconds,

@@ -313,26 +313,33 @@ REALISM_INSTRUCTION = prompts.text("video.realism")
 SINGLE_SHOT_INSTRUCTION = prompts.text("video.single_shot")
 
 
+NO_FIRST_FRAME_INSTRUCTION = prompts.text("video.no_first_frame")
+
+
 def build_omni_generation_prompt(
     prompt: str,
     reference_descriptions: Optional[List[str]] = None,
     scene_audio: Optional[str] = None,
     has_end_frame: bool = False,
+    has_first_frame: bool = True,
 ) -> str:
     """
     Builds the text part of an Omni generation request.
 
-    The pictures are sent in this order: the first frame, the last frame (if any), then the
-    reference pictures. Their roles are stated in plain language: the Omni docs deprecated the
+    The pictures are sent in this order: the first frame (if any), the last frame (if any), then
+    the reference pictures. Their roles are stated in plain language: the Omni docs deprecated the
     <FIRST_FRAME> / <IMAGE_REF_N> control tags.
     """
     refs = reference_descriptions or []
-    lines = [prompt.strip(), "", SINGLE_SHOT_INSTRUCTION, REALISM_INSTRUCTION, "", "Picture 1 is the first frame of the video."]
+    lines = [prompt.strip(), "", SINGLE_SHOT_INSTRUCTION, REALISM_INSTRUCTION, ""]
+    lines.append("Picture 1 is the first frame of the video." if has_first_frame else NO_FIRST_FRAME_INSTRUCTION)
+    frames = int(has_first_frame) + int(has_end_frame)
     if has_end_frame:
-        lines.append("Picture 2 is the last frame of the video: the video ends on it.")
+        lines.append(f"Picture {frames} is the last frame of the video: the video ends on it.")
     if refs:
-        first_ref = 3 if has_end_frame else 2
-        lines += ["", "The other pictures are references for how things look. Never show them as frames of the video:"]
+        first_ref = frames + 1
+        which = "The other pictures" if frames else "The pictures"
+        lines += ["", f"{which} are references for how things look. Never show them as frames of the video:"]
         for i, description in enumerate(refs):
             text = (description or "").strip() or "Additional visual reference for this video."
             lines.append(f"- Picture {i + first_ref}: {text}")
@@ -727,7 +734,7 @@ def _run_video_interaction(
 
 def generate_scene_video(
     prompt: str,
-    image_path: str,
+    image_path: Optional[str],
     output_path: str,
     aspect_ratio: str = "9:16",
     duration_seconds: int = 8,
@@ -750,7 +757,8 @@ def generate_scene_video(
     - extend_interaction_id: continue the video of that interaction (the previous scene's take) in
       the same shot. The model returns the earlier video WITH the new part appended, so the caller
       cuts the earlier part off (trim_video_start). image_path and pictures are not used.
-    - otherwise: a new video from image_path, ending on end_image_path if given.
+    - otherwise: a new video from image_path, ending on end_image_path if given. Without an
+      image_path the model composes the opening shot itself from the prompt and the references.
 
     reference_images: optional list of {"path": local_image_path, "description": str}, sent after
     the first (and last) frame.
@@ -798,7 +806,7 @@ def generate_scene_video(
     else:
         # Order matters, the prompt names the pictures by position: first frame, last frame, references.
         has_end_frame = bool(end_image_path and os.path.exists(end_image_path))
-        frames = [image_path] + ([end_image_path] if has_end_frame else [])
+        frames = ([image_path] if image_path else []) + ([end_image_path] if has_end_frame else [])
         input_parts = []
         for path in frames + [ref["path"] for ref in references]:
             meta = upload_to_files_api(client, path)
@@ -806,7 +814,7 @@ def generate_scene_video(
 
         sent_prompt = build_omni_generation_prompt(
             prompt, [r.get("description", "") for r in references], scene_audio=scene_audio,
-            has_end_frame=has_end_frame,
+            has_end_frame=has_end_frame, has_first_frame=bool(image_path),
         )
         input_parts.append({"type": "text", "text": sent_prompt})
         logger.info("Omni request: %d frame(s) + %d reference picture(s).", len(frames), len(references))

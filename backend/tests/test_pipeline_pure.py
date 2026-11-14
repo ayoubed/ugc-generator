@@ -206,3 +206,49 @@ def test_the_take_check_flags_a_take_that_adds_a_line(tmp_path, monkeypatch):
 
     said["text"] = script
     assert pipeline.check_take(str(video), script=script)["ok"] is True
+
+
+def test_generation_prompt_without_a_first_frame_numbers_the_references_from_one():
+    text = pipeline.build_omni_generation_prompt("A hand picks up the watch.", ["The watch"], has_first_frame=False)
+    assert "is the first frame of the video." not in text
+    assert pipeline.NO_FIRST_FRAME_INSTRUCTION in text and "real-life size" in pipeline.NO_FIRST_FRAME_INSTRUCTION
+    assert "The pictures are references" in text and "- Picture 1: The watch" in text
+
+    with_end = pipeline.build_omni_generation_prompt("A hand picks up the watch.", ["The watch"], has_end_frame=True, has_first_frame=False)
+    assert "Picture 1 is the last frame" in with_end and "- Picture 2: The watch" in with_end
+
+
+def test_a_take_without_a_first_frame_sends_only_the_reference_pictures(tmp_path, monkeypatch):
+    start = tmp_path / "start.jpg"; start.write_bytes(b"start")
+    ref = tmp_path / "ref.jpg"; ref.write_bytes(b"ref")
+    sent = {}
+
+    class Meta:
+        def __init__(self, path):
+            self.uri, self.mime_type = f"files/{path.rsplit('/', 1)[-1]}", "image/jpeg"
+
+    class Video:
+        uri = "files/out.mp4"
+
+    class Interaction:
+        id, output_video = "int-1", Video()
+
+    class Files:
+        def download(self, file):
+            return b"video"
+
+    class Client:
+        files = Files()
+
+    monkeypatch.setattr(pipeline, "get_client", lambda: Client())
+    monkeypatch.setattr(pipeline, "upload_to_files_api", lambda client, path, *a, **k: Meta(path))
+    monkeypatch.setattr(pipeline, "_run_video_interaction", lambda client, request, *a: sent.update(request) or Interaction())
+    refs = [{"path": str(ref), "description": "The watch"}]
+
+    pipeline.generate_scene_video("A hand picks it up.", None, str(tmp_path / "out.mp4"), reference_images=refs)
+    assert [p["uri"] for p in sent["input"] if p["type"] == "image"] == ["files/ref.jpg"]
+    assert "- Picture 1: The watch" in sent["input"][-1]["text"]
+
+    pipeline.generate_scene_video("A hand picks it up.", str(start), str(tmp_path / "out.mp4"), reference_images=refs)
+    assert [p["uri"] for p in sent["input"] if p["type"] == "image"] == ["files/start.jpg", "files/ref.jpg"]
+    assert "Picture 1 is the first frame" in sent["input"][-1]["text"]
