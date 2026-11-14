@@ -23,7 +23,7 @@ function load() {
 
 /**
  * The offered video, script and music models (from GET /api/models).
- * Returns { videoModels, scriptModels, musicModels, default*Model, loading, error }.
+ * Returns { videoModels, scriptModels, musicModels, imageModels, default*Model, loading, error }.
  */
 export function useModels() {
   const [data, setData] = useState(cache);
@@ -47,6 +47,9 @@ export function useModels() {
     defaultScriptModel: data?.default_script_model || '',
     musicModels: data?.music_models || [],
     defaultMusicModel: data?.default_music_model || '',
+    // Draw the storyboard frames and camera-cut pictures (project.settings.imageModel).
+    imageModels: data?.image_models || [],
+    defaultImageModel: data?.default_image_model || '',
     loading: !data && !error,
     error,
   };

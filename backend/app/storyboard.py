@@ -27,6 +27,7 @@ from app.jobs import (
     collect_reference_specs,
     is_product_led,
 )
+from app.model_registry import get_image_model
 from app.pipeline import (
     asset_bible_lines,
     check_storyboard_frame,
@@ -211,6 +212,7 @@ def draw_frame(
             return generate_storyboard_frame(
                 path, moment, aspect_ratio=aspect_ratio, reference_images=pictures, asset_lines=asset_lines,
                 product_led=product_led, base_image_path=base_path, instruction=instruction, feedback=feedback,
+                image_model=settings.get("imageModel"),
             )
 
         def check(path: str) -> Optional[List[Dict[str, str]]]:
@@ -248,6 +250,7 @@ def draw_frame(
             "issues": issues or [],
             "checked": issues is not None,
             "source": "ai",
+            "imageModel": get_image_model(settings.get("imageModel"))["id"],
             "updatedAt": now_iso(),
         }
     finally:

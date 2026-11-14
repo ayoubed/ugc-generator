@@ -5,11 +5,22 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import StoryboardPage from './StoryboardPage';
 import { addStoryboardFrame, editStoryboardFrame, remakeStoryboardFrame, removeStoryboardFrame } from '../services/api';
+import { updateProjectSettings } from '../hooks/useProject';
 
 const data = { project: null, scenes: [] };
 vi.mock('../hooks/useProject', () => ({
   useProject: () => ({ project: data.project, loading: false }),
   useScenes: () => ({ scenes: data.scenes, loading: false }),
+  updateProjectSettings: vi.fn(async () => {}),
+}));
+vi.mock('../hooks/useModels', () => ({
+  useModels: () => ({
+    imageModels: [
+      { id: 'pro', label: 'Nano Banana Pro', description: 'Best at fine detail.' },
+      { id: 'fast', label: 'Nano Banana 2', description: 'Faster and cheaper.' },
+    ],
+    defaultImageModel: 'pro',
+  }),
 }));
 vi.mock('../hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'u1' } }) }));
 vi.mock('../hooks/useStorageUrl', () => ({ useStorageUrl: (path) => (path ? `https://files.test/${path}` : '') }));
@@ -29,8 +40,8 @@ const frame = (extra = {}) => ({ id: 'f1', order: 0, description: 'A wrist with 
 const withFrame = (id, frameExtra = {}, sceneExtra = {}) =>
   scene(id, { storyboard: { frames: { f1: frame(frameExtra) } }, ...sceneExtra });
 
-function open(scenes = [scene('0'), scene('1')]) {
-  data.project = { id: 'p1', userId: 'u1', status: 'scripted', settings: {} };
+function open(scenes = [scene('0'), scene('1')], settings = {}) {
+  data.project = { id: 'p1', userId: 'u1', status: 'scripted', settings };
   data.scenes = scenes;
   render(
     <MemoryRouter initialEntries={['/project/p1/storyboard']}>
@@ -52,6 +63,26 @@ describe('Storyboard step', () => {
     expect(screen.getByText(/No frames yet/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /Skip to Generate/ }));
     expect(screen.getByText('generate page')).toBeTruthy();
+  });
+
+  it('uses the default image model until another is chosen, and saves the choice', async () => {
+    open();
+    const picker = screen.getByLabelText('Image model');
+    expect(picker.value).toBe('pro');
+    expect(screen.getByText('Best at fine detail.')).toBeTruthy();
+    await userEvent.selectOptions(picker, 'Nano Banana 2');
+    expect(updateProjectSettings).toHaveBeenCalledWith('p1', { imageModel: 'fast' });
+  });
+
+  it('shows the saved image model, and the default when the saved one is no longer offered', () => {
+    open(undefined, { imageModel: 'fast' });
+    expect(screen.getByLabelText('Image model').value).toBe('fast');
+    expect(screen.getByText('Faster and cheaper.')).toBeTruthy();
+  });
+
+  it('falls back to the default for a model that is gone', () => {
+    open(undefined, { imageModel: 'retired' });
+    expect(screen.getByLabelText('Image model').value).toBe('pro');
   });
 
   it('draws a scene frame from the description, which can be edited first', async () => {

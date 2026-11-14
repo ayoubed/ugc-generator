@@ -3593,6 +3593,19 @@ button.tl-block { cursor: pointer; }
   color: var(--text-secondary);
 }
 
+.board-model {
+  display: flex;
+  flex: 0 1 260px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.board-model-note {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
 .board-list {
   display: flex;
   flex-direction: column;

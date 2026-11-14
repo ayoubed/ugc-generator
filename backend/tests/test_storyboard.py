@@ -43,7 +43,7 @@ def test_an_edit_prompt_keeps_the_frame_and_numbers_the_other_pictures_from_two(
 def test_drawing_sends_the_frame_first_when_changing_it(monkeypatch, tmp_path):
     sent = {}
     monkeypatch.setattr(pipeline, "_image_part", lambda path: f"<{path}>")
-    monkeypatch.setattr(pipeline, "_draw_still", lambda contents, out, ratio, what: sent.update(contents=contents, ratio=ratio) or out)
+    monkeypatch.setattr(pipeline, "_draw_still", lambda contents, out, ratio, what, model=None: sent.update(contents=contents, ratio=ratio, model=model) or out)
     base, ref = tmp_path / "base.png", tmp_path / "ref.png"
     base.write_bytes(b"x"), ref.write_bytes(b"y")
     pictures = [{"path": str(ref), "description": "The watch"}, {"path": str(tmp_path / "missing.png")}]
@@ -55,6 +55,39 @@ def test_drawing_sends_the_frame_first_when_changing_it(monkeypatch, tmp_path):
     pipeline.generate_storyboard_frame("out.png", "A wrist", "1:1", pictures, base_image_path=str(base))   # no instruction: a new picture
     assert sent["contents"][0] == f"<{ref}>" and sent["ratio"] == "1:1"
     assert "What the frame shows: A wrist" in sent["contents"][-1]
+    assert sent["model"] is None
+
+    pipeline.generate_storyboard_frame("out.png", "A wrist", "9:16", pictures, image_model="gemini-3.1-flash-image")
+    assert sent["model"] == "gemini-3.1-flash-image"
+
+
+def test_nano_banana_pro_is_the_default_and_an_unknown_choice_falls_back_to_it():
+    from app import model_registry
+    payload = model_registry.models_payload()
+    assert payload["default_image_model"] == "gemini-3-pro-image"
+    assert [m["label"] for m in payload["image_models"]] == ["Nano Banana Pro", "Nano Banana 2"]
+    assert model_registry.get_image_model(None)["id"] == "gemini-3-pro-image"
+    assert model_registry.get_image_model("retired-model")["id"] == "gemini-3-pro-image"
+    assert model_registry.get_image_model("gemini-3.1-flash-image")["label"] == "Nano Banana 2"
+
+
+def test_a_picture_is_asked_of_the_chosen_model(monkeypatch, tmp_path):
+    asked = []
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            asked.append(model)
+            from types import SimpleNamespace as NS
+            part = NS(inline_data=NS(data=b"png"))
+            return NS(candidates=[NS(content=NS(parts=[part]))])
+
+    monkeypatch.setattr(pipeline, "get_client", lambda: type("C", (), {"models": Models()})())
+    out = str(tmp_path / "a.png")
+    pipeline._draw_still(["x"], out, "9:16", "this frame")
+    pipeline._draw_still(["x"], out, "9:16", "this frame", "gemini-3.1-flash-image")
+    pipeline._draw_still(["x"], out, "9:16", "this frame", "no-such-model")
+    assert asked == ["gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-3-pro-image"]
+    assert open(out, "rb").read() == b"png"
 
 
 # --- which frame a scene starts on ---------------------------------------------------------------
@@ -191,6 +224,13 @@ def test_a_good_frame_is_drawn_once_and_saved_unaccepted(studio):
     assert len(studio.checks[0]["products"]) == 1
     assert made["imageRef"] == f"{BASE}scenes/0/storyboard/f1_v1.png" and studio.uploads[0][0] == made["imageRef"]
     assert made["accepted"] is False and made["issues"] == [] and made["checked"] is True and made["version"] == 1
+    assert studio.draws[0]["image_model"] is None and made["imageModel"] == "gemini-3-pro-image"
+
+
+def test_a_frame_is_drawn_with_the_model_the_project_chose(studio):
+    project = {**PROJECT, "settings": {**PROJECT["settings"], "imageModel": "gemini-3.1-flash-image"}}
+    made = storyboard.draw_frame("u1", "p1", "0", {"id": "f1"}, project, SCENE, [])
+    assert studio.draws[0]["image_model"] == "gemini-3.1-flash-image" and made["imageModel"] == "gemini-3.1-flash-image"
 
 
 def test_a_flagged_frame_is_drawn_once_more_with_what_was_wrong(studio):

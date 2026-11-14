@@ -79,8 +79,21 @@ TAKE_CHECK_MODEL_ID = "gemini-2.5-flash"
 # (see pipeline.analyse_reference_video).
 REFERENCE_MODEL_ID = "gemini-2.5-pro"
 
-# Draws the first frame of a scene that cuts to a new camera position (see pipeline.generate_cut_still).
-STILL_MODEL_ID = "gemini-3.1-flash-image"
+# Draw the storyboard frames (pipeline.generate_storyboard_frame) and the first frame of a scene
+# that cuts to a new camera position (pipeline.generate_cut_still). project.settings.imageModel.
+IMAGE_MODELS: List[Dict[str, Any]] = [
+    {
+        "id": "gemini-3-pro-image",
+        "label": "Nano Banana Pro",
+        "description": "Best at fine detail and readable text on a product. Slower.",
+    },
+    {
+        "id": "gemini-3.1-flash-image",
+        "label": "Nano Banana 2",
+        "description": "Faster and cheaper. Small text on a product often comes out wrong.",
+    },
+]
+DEFAULT_IMAGE_MODEL_ID = IMAGE_MODELS[0]["id"]
 
 
 def _find(models: List[Dict[str, Any]], model_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -90,6 +103,11 @@ def _find(models: List[Dict[str, Any]], model_id: Optional[str]) -> Optional[Dic
 def get_video_model(model_id: Optional[str]) -> Dict[str, Any]:
     """The saved model, or the default if it's missing or no longer offered (e.g. retired Veo models)."""
     return _find(VIDEO_MODELS, model_id) or VIDEO_MODELS[0]
+
+
+def get_image_model(model_id: Optional[str]) -> Dict[str, Any]:
+    """The saved image model, or the default if it's missing or no longer offered."""
+    return _find(IMAGE_MODELS, model_id) or IMAGE_MODELS[0]
 
 
 def get_script_model(model_id: Optional[str]) -> Dict[str, Any]:
@@ -128,6 +146,8 @@ def models_payload() -> Dict[str, Any]:
         "video_models": VIDEO_MODELS,
         "script_models": SCRIPT_MODELS,
         "music_models": [m for m in MUSIC_MODELS if _offered(m)],
+        "image_models": IMAGE_MODELS,
+        "default_image_model": DEFAULT_IMAGE_MODEL_ID,
         "default_video_model": DEFAULT_VIDEO_MODEL_ID,
         "default_script_model": DEFAULT_SCRIPT_MODEL_ID,
         "default_music_model": DEFAULT_MUSIC_MODEL_ID,

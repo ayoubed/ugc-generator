@@ -14,7 +14,7 @@ from google import genai
 from google.genai import types
 import difflib
 from app.models import Scene, SceneList, AssetBible, TakeCheckResult, FrameCheckResult, ReferenceBreakdown
-from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID, REFERENCE_MODEL_ID
+from app.model_registry import get_video_model, get_music_model, get_image_model, TAKE_CHECK_MODEL_ID, REFERENCE_MODEL_ID
 from app import prompts
 from app.captions import build_ass, fit_words_to_clip, word_timings
 from app.beats import music_fit_for_cuts
@@ -853,6 +853,7 @@ def generate_cut_still(
     aspect_ratio: str = "9:16",
     reference_images: Optional[List[Dict[str, Any]]] = None,
     asset_lines: Optional[List[str]] = None,
+    image_model: Optional[str] = None,
 ) -> str:
     """
     The first frame of a scene that cuts to a new camera position: the image model redraws the last
@@ -887,14 +888,19 @@ def generate_cut_still(
 
     contents: List[Any] = [image_part(frame_path)] + [image_part(r["path"]) for r in references]
     contents.append("\n".join(lines))
-    return _draw_still(contents, output_path, aspect_ratio, "the camera cut")
+    return _draw_still(contents, output_path, aspect_ratio, "the camera cut", image_model)
 
 
-def _draw_still(contents: List[Any], output_path: str, aspect_ratio: str, what: str) -> str:
-    """One picture from the image model, saved to output_path. `what` names it in the error."""
+def _draw_still(
+    contents: List[Any], output_path: str, aspect_ratio: str, what: str, image_model: Optional[str] = None
+) -> str:
+    """
+    One picture from the image model, saved to output_path. `what` names it in the error.
+    image_model: the project's choice (settings.imageModel); unknown or missing, the default is used.
+    """
     client = get_client()  # kept in a variable: a dropped client closes its connection mid-request
     response = client.models.generate_content(
-        model=STILL_MODEL_ID,
+        model=get_image_model(image_model)["id"],
         contents=contents,
         config=types.GenerateContentConfig(
             response_modalities=["IMAGE"],
@@ -966,6 +972,7 @@ def generate_storyboard_frame(
     base_image_path: Optional[str] = None,
     instruction: Optional[str] = None,
     feedback: Optional[List[str]] = None,
+    image_model: Optional[str] = None,
 ) -> str:
     """
     Draws one storyboard frame with the image model: the picture a scene's video will start on.
@@ -987,7 +994,7 @@ def generate_storyboard_frame(
         contents = []
     contents += [_image_part(r["path"]) for r in references]
     contents.append(prompt)
-    return _draw_still(contents, output_path, aspect_ratio, "this frame")
+    return _draw_still(contents, output_path, aspect_ratio, "this frame", image_model)
 
 
 def check_storyboard_frame(

@@ -739,6 +739,7 @@ def _run_video_generation_job_sync(
                         aspect_ratio=config.get("aspect_ratio", "9:16"),
                         reference_images=reference_images,
                         asset_lines=asset_bible_lines((project_data.get("settings") or {}).get("assetBible")),
+                        image_model=(project_data.get("settings") or {}).get("imageModel"),
                     )
                 except Exception as still_err:
                     # The take still gets a cut: the frame is zoomed and re-framed instead.

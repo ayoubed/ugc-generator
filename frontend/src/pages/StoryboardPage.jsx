@@ -4,7 +4,8 @@ import Layout from '../components/Layout';
 import Stepper from '../components/Stepper';
 import LoadingSpinner from '../components/LoadingSpinner';
 import StoryboardSceneCard from '../components/StoryboardSceneCard';
-import { useProject, useScenes } from '../hooks/useProject';
+import { updateProjectSettings, useProject, useScenes } from '../hooks/useProject';
+import { useModels } from '../hooks/useModels';
 import { useAuth } from '../hooks/useAuth';
 import { addStoryboardFrame } from '../services/api';
 import { STEP, isSceneSkipped, maxReachableStep, sceneLabels, stepPath } from '../utils/projectProgress';
@@ -27,6 +28,22 @@ export default function StoryboardPage() {
   const { scenes, loading: scenesLoading } = useScenes(id);
   const [drawing, setDrawing] = useState([]);    // ids of scenes being drawn by "Draw the missing frames"
   const [pageError, setPageError] = useState('');
+  const { imageModels, defaultImageModel } = useModels();
+
+  // The project's choice if it is still offered, otherwise the default (same rule as the server).
+  const savedModel = project?.settings?.imageModel;
+  const imageModelId = imageModels.some((m) => m.id === savedModel) ? savedModel : defaultImageModel;
+  const imageModel = imageModels.find((m) => m.id === imageModelId);
+
+  const chooseModel = async (event) => {
+    setPageError('');
+    try {
+      await updateProjectSettings(id, { imageModel: event.target.value });
+    } catch (err) {
+      console.error('Could not save the image model:', err);
+      setPageError('Could not save the image model. Check your connection and try again.');
+    }
+  };
 
   const labels = sceneLabels(scenes);
   const inVideo = scenes.filter((scene) => !isSceneSkipped(scene));
@@ -107,6 +124,22 @@ export default function StoryboardPage() {
                     so the product, the setting and the light stay the same.
                   </p>
                 )}
+              </div>
+              <div className="board-model">
+                <label className="board-label" htmlFor="board-image-model">Image model</label>
+                <select
+                  id="board-image-model"
+                  className="input"
+                  value={imageModelId}
+                  onChange={chooseModel}
+                  disabled={!imageModels.length || drawingAll}
+                >
+                  {!imageModels.length && <option value="">Loading…</option>}
+                  {imageModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+                {imageModel?.description && <p className="board-model-note">{imageModel.description}</p>}
               </div>
               {missing.length > 0 && (
                 <button type="button" className="btn btn-secondary" onClick={drawMissing} disabled={drawingAll}>
