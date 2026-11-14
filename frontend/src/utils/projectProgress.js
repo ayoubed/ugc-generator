@@ -415,8 +415,8 @@ export function projectEndCard(project) {
     enabled: Boolean(c.enabled),
     imageRef: c.imageRef || '',
     imageUrl: c.imageUrl || '',
-    headline: (c.headline || '').trim(),
-    subline: (c.subline || '').trim(),
+    // The picture the last prompt change replaced, so that change can be taken back.
+    previous: c.previous?.imageRef ? { imageRef: c.previous.imageRef, imageUrl: c.previous.imageUrl || '' } : null,
     seconds: typeof c.seconds === 'number' ? c.seconds : END_CARD_DEFAULT_SECONDS,
   };
 }
@@ -465,11 +465,10 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
     if ('endCard' in finalVideo) {
       const card = projectEndCard(project);
       const now = card.enabled && card.imageRef
-        ? [card.imageRef, card.headline, card.subline, card.seconds].join('|')
+        ? [card.imageRef, card.seconds].join('|')
         : '';
       const then = finalVideo.endCard
-        ? [finalVideo.endCard.imageRef, finalVideo.endCard.headline || '', finalVideo.endCard.subline || '',
-            finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
+        ? [finalVideo.endCard.imageRef, finalVideo.endCard.seconds || END_CARD_DEFAULT_SECONDS].join('|')
         : '';
       if (now !== then) return 'The end card changed since this version was stitched.';
     }

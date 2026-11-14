@@ -409,3 +409,8 @@ export function editStoryboardFrame(projectId, sceneId, frameId, changes) {
 export function removeStoryboardFrame(projectId, sceneId, frameId) {
   return callApi(`${framesPath(projectId, sceneId)}/${frameId}`, { method: 'DELETE', fallback: 'Could not remove the frame' });
 }
+
+/** Change the end card picture as asked ("put it on dark marble"). Returns { imageRef, imageUrl }; the project updates too. */
+export function editEndCard(projectId, instruction) {
+  return callApi(`/api/projects/${projectId}/end-card/edit`, { body: { instruction: instruction.trim() }, fallback: 'Could not change the end card' });
+}

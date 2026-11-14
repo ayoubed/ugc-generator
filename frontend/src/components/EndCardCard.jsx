@@ -1,19 +1,19 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../services/firebase';
 import { updateProjectSettings } from '../hooks/useProject';
+import { editEndCard } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import { END_CARD_SECONDS, projectEndCard } from '../utils/projectProgress';
 
 const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
-const SAVE_DELAY_MS = 700;
 
 /**
- * Optional closing card, added after the last scene when the video is stitched: a real product
- * picture with a headline and a smaller line (offer, link, handle). Generated scenes can get a
- * label wrong; this frame is always right.
+ * Optional closing card, added after the last scene when the video is stitched: one picture, shown
+ * as it is. The picture is uploaded, and can then be changed with a short prompt (a new
+ * background, a line of text): whatever the card says is part of the picture itself.
  *
  * @param {object}  project
  * @param {string}  storagePrefix users/{uid}/projects/{pid}
@@ -23,12 +23,10 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
   const baseId = useId();
   const fileInputRef = useRef(null);
   const card = projectEndCard(project);
-  const [headline, setHeadline] = useState(card.headline);
-  const [subline, setSubline] = useState(card.subline);
   const [uploading, setUploading] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [instruction, setInstruction] = useState('');
   const [error, setError] = useState('');
-  const timer = useRef(null);
-  const pending = useRef(null);
 
   const save = async (partial) => {
     setError('');
@@ -40,22 +38,27 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
     }
   };
 
-  // Text is saved a moment after typing stops, and right away when the card goes away.
-  const flush = () => {
-    clearTimeout(timer.current);
-    if (pending.current) {
-      const partial = pending.current;
-      pending.current = null;
-      save(partial);
+  const change = async (event) => {
+    event.preventDefault();
+    if (!instruction.trim()) return;
+    setError('');
+    setChanging(true);
+    try {
+      await editEndCard(project.id, instruction);
+      setInstruction('');
+    } catch (err) {
+      setError(err?.message || 'Could not change the picture. Try again.');
+    } finally {
+      setChanging(false);
     }
   };
-  const saveSoon = (partial) => {
-    pending.current = { ...(pending.current || {}), ...partial };
-    clearTimeout(timer.current);
-    timer.current = setTimeout(flush, SAVE_DELAY_MS);
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => flush, []);
+
+  // Puts back the picture the last prompt change replaced.
+  const undo = () => save({
+    'endCard.imageRef': card.previous.imageRef,
+    'endCard.imageUrl': card.previous.imageUrl,
+    'endCard.previous': null,
+  });
 
   const handleFile = async (event) => {
     const file = event.target.files?.[0];
@@ -83,6 +86,7 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
       await updateProjectSettings(project.id, {
         'endCard.imageRef': path,
         'endCard.imageUrl': url,
+        'endCard.previous': null,
         'endCard.enabled': true,
       });
     } catch (err) {
@@ -93,7 +97,7 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
     }
   };
 
-  const locked = disabled || uploading;
+  const locked = disabled || uploading || changing;
   const on = card.enabled && Boolean(card.imageRef);
 
   return (
@@ -109,8 +113,8 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
         <div>
           <h2 className="music-title" id={`${baseId}-title`}>End card</h2>
           <p className="music-sub">
-            A closing frame with your real product picture and a call to action, added after the last scene.
-            The music carries through it.
+            A closing picture, added after the last scene. Upload one, then change it with a prompt if you
+            like. The music carries through it.
           </p>
         </div>
       </div>
@@ -120,14 +124,40 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
           <div className="start-preview end-preview">
             {card.imageUrl && <img src={card.imageUrl} alt="End card picture" />}
             <p className="start-preview-text">
-              {on ? 'The video ends on this picture.' : 'The end card is off. The picture is kept in case you turn it back on.'}
+              {changing
+                ? 'Changing the picture…'
+                : on ? 'The video ends on this picture.' : 'The end card is off. The picture is kept in case you turn it back on.'}
             </p>
             <div className="start-preview-actions">
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current?.click()} disabled={locked}>
                 {uploading ? 'Uploading…' : 'Replace'}
               </button>
+              {card.previous && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={undo} disabled={locked}>
+                  Undo the last change
+                </button>
+              )}
             </div>
           </div>
+
+          <form className="board-change" onSubmit={change} style={{ marginTop: '12px' }}>
+            <label className="label" htmlFor={`${baseId}-change`}>Change the picture with a prompt</label>
+            <div className="board-change-row">
+              <input
+                id={`${baseId}-change`}
+                className="input"
+                type="text"
+                maxLength={400}
+                placeholder="e.g. put it on dark marble, and write “Link in bio” under it"
+                value={instruction}
+                disabled={locked}
+                onChange={(e) => setInstruction(e.target.value)}
+              />
+              <button type="submit" className="btn btn-secondary" disabled={locked || !instruction.trim()}>
+                {changing ? 'Changing…' : 'Change'}
+              </button>
+            </div>
+          </form>
 
           <label className="gen-run-option" htmlFor={`${baseId}-on`} style={{ marginTop: '12px' }}>
             <input
@@ -142,30 +172,6 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
 
           {on && (
             <div className="end-card-fields">
-              <label className="label" htmlFor={`${baseId}-headline`}>Headline</label>
-              <input
-                id={`${baseId}-headline`}
-                className="input"
-                type="text"
-                maxLength={80}
-                placeholder="e.g. GLOWLEAF Revitalising Serum"
-                value={headline}
-                disabled={disabled}
-                onChange={(e) => { setHeadline(e.target.value); saveSoon({ 'endCard.headline': e.target.value }); }}
-                onBlur={flush}
-              />
-              <label className="label" htmlFor={`${baseId}-subline`}>Smaller line</label>
-              <input
-                id={`${baseId}-subline`}
-                className="input"
-                type="text"
-                maxLength={120}
-                placeholder="e.g. Link in bio · 20% off this week"
-                value={subline}
-                disabled={disabled}
-                onChange={(e) => { setSubline(e.target.value); saveSoon({ 'endCard.subline': e.target.value }); }}
-                onBlur={flush}
-              />
               <label className="label" htmlFor={`${baseId}-seconds`}>Shown for</label>
               <select
                 id={`${baseId}-seconds`}
@@ -178,16 +184,16 @@ export default function EndCardCard({ project, storagePrefix = '', disabled = fa
                   <option key={s} value={String(s)}>{s} seconds</option>
                 ))}
               </select>
-              <p className="field-hint">Leave both lines empty to show the picture alone. Stitch again to see the card.</p>
+              <p className="field-hint">The picture is shown as it is. Stitch again to see the card.</p>
             </div>
           )}
         </>
       ) : (
         <div className="start-preview start-preview-empty end-preview">
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => fileInputRef.current?.click()} disabled={locked}>
-            {uploading ? 'Uploading…' : 'Add product picture'}
+            {uploading ? 'Uploading…' : 'Add a picture'}
           </button>
-          <p className="start-preview-text">PNG, JPG or WebP, up to 20 MB. A clean packshot works best.</p>
+          <p className="start-preview-text">PNG, JPG or WebP, up to 20 MB. A picture shaped like the video fills the frame.</p>
         </div>
       )}
 

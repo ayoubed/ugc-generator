@@ -134,9 +134,9 @@ describe('final videos', () => {
     expect(finalVideoChangeReason(stitched, scenes, { settings: { music } })).toContain('music changed');
     expect(finalVideoChangeReason({ ...stitched, music }, scenes, { settings: { music: { ...music, volume: 'high' } } })).toContain('volume');
     expect(finalVideoChangeReason({ ...stitched, captions: 'pop' }, scenes, { settings: {} })).toContain('caption style');
-    const card = { enabled: true, imageRef: 'card.png', headline: 'Buy now' };
+    const card = { enabled: true, imageRef: 'card.png' };
     expect(finalVideoChangeReason({ ...stitched, endCard: null }, scenes, { settings: { endCard: card } })).toContain('end card');
-    expect(finalVideoChangeReason({ ...stitched, endCard: { imageRef: 'card.png', headline: 'Buy now' } }, scenes, { settings: { endCard: card } })).toBe('');
+    expect(finalVideoChangeReason({ ...stitched, endCard: { imageRef: 'card.png', headline: 'Buy now' } }, scenes, { settings: { endCard: card } })).toBe('');   // text of older versions is ignored
   });
 
   it('does not flag versions stitched before a feature existed', () => {
@@ -180,8 +180,10 @@ describe('journey', () => {
 
 describe('small helpers', () => {
   it('reads the end card with defaults', () => {
-    expect(projectEndCard({})).toEqual({ enabled: false, imageRef: '', imageUrl: '', headline: '', subline: '', seconds: 2.5 });
-    expect(projectEndCard({ settings: { endCard: { enabled: true, headline: ' Hi ', seconds: 4 } } }).headline).toBe('Hi');
+    expect(projectEndCard({})).toEqual({ enabled: false, imageRef: '', imageUrl: '', previous: null, seconds: 2.5 });
+    const changed = projectEndCard({ settings: { endCard: { enabled: true, imageRef: 'b.png', seconds: 4, previous: { imageRef: 'a.png' } } } });
+    expect(changed.previous).toEqual({ imageRef: 'a.png', imageUrl: '' });
+    expect(changed.seconds).toBe(4);
   });
 
   it('uses the typed caption text over the script, including an empty one', () => {

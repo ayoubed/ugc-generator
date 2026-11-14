@@ -1074,7 +1074,7 @@ def _run_stitch_job_sync(
         # Caption text per scene: what the user typed on the Finish step, otherwise the script.
         # An empty text means no caption on that scene.
         caption_texts = {doc_id: scene_caption_text(settings, doc_id, data) for _, doc_id, data in scenes_list}
-        # Optional closing card: a real product picture with a headline, after the last scene.
+        # Optional closing card: a picture shown after the last scene.
         end_card = None
         card = settings.get("endCard") if isinstance(settings.get("endCard"), dict) else {}
         if card.get("enabled") and card.get("imageRef"):
@@ -1086,8 +1086,6 @@ def _run_stitch_job_sync(
                 raise ValueError("Could not load the end card picture. Remove it or upload it again on the Finish step.") from e
             end_card = {
                 "image_path": card_local,
-                "headline": str(card.get("headline") or "")[:80],
-                "subline": str(card.get("subline") or "")[:120],
                 "seconds": card.get("seconds") if isinstance(card.get("seconds"), (int, float)) else None,
             }
 
@@ -1200,8 +1198,6 @@ def _run_stitch_job_sync(
             },
             "endCard": {
                 "imageRef": card["imageRef"],
-                "headline": end_card["headline"],
-                "subline": end_card["subline"],
                 "seconds": end_card["seconds"],
             } if end_card else None,
         })

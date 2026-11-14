@@ -228,8 +228,9 @@ describe('playing the cut', () => {
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
     at(preview(), 2);
     fireEvent.timeUpdate(preview());
-    expect(screen.getByText('0:02.0 / 0:10.0')).toBeTruthy();
-    expect(document.querySelector('.tl-playhead').style.left).toBe(`${2 * PPS}px`);
+    // The readout follows on the next render; under a busy test run that is not always at once.
+    expect(await screen.findByText('0:02.0 / 0:10.0')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.tl-playhead').style.left).toBe(`${2 * PPS}px`));
   });
 
   it('goes on to the next scene at the out-point, and stops after the last', async () => {
@@ -393,17 +394,15 @@ describe('captions on the timeline', () => {
 });
 
 describe('the end card on the timeline', () => {
-  const settings = { endCard: { enabled: true, imageRef: 'card.png', headline: 'Shop now', subline: 'Link below', seconds: 3 } };
+  const settings = { endCard: { enabled: true, imageRef: 'card.png', seconds: 3 } };
 
-  it('opens its headline, second line and length, and saves changes', async () => {
+  it('opens its length only: the card is a picture, with no text fields', async () => {
     show({ settings });
     await userEvent.click(track('Video track').getByRole('button', { name: 'End card, 3 seconds' }));
     expect(screen.getByRole('heading', { name: 'End card' })).toBeTruthy();
-    expect(screen.getByLabelText('Headline').value).toBe('Shop now');
-    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: 'Get yours' } });
-    await waitFor(() => expect(saved()).toEqual(['p1', { 'endCard.headline': 'Get yours' }]), { timeout: 2000 });
-    fireEvent.change(screen.getByLabelText('Second line'), { target: { value: '2 for 1' } });
-    await waitFor(() => expect(saved()).toEqual(['p1', { 'endCard.subline': '2 for 1' }]), { timeout: 2000 });
+    expect(screen.getByLabelText('Length').value).toBe('3');
+    expect(screen.queryByLabelText('Headline')).toBeNull();
+    expect(screen.queryByLabelText('Second line')).toBeNull();
   });
 
   it('changes its length, and the timeline grows with it', async () => {

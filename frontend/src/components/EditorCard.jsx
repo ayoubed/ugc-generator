@@ -29,7 +29,7 @@ const SAVE_DELAY_MS = 500;
  * of the panel that opens when it is selected (the same thing, for the keyboard). The panel also
  * holds the scene's voice volume and mute; selecting the music bar shows its volume.
  *
- * A caption block opens that scene's caption text, and the end card block its headline, second
+ * A caption block opens that scene's caption text, and the end card block its length; a second
  * line and length. The chosen voice is applied by the stitch, so the preview has each scene's own
  * voice. "Export for another editor" builds a package other editors can open.
  *
@@ -721,16 +721,6 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             <>
               <h3 className="editor-inspector-title">End card</h3>
               <div className="editor-card-fields">
-                <label htmlFor={`${baseId}-card-headline`}>Headline</label>
-                <input
-                  id={`${baseId}-card-headline`} className="input" type="text" maxLength={80} value={cardValue('headline')} disabled={disabled}
-                  onChange={(e) => changeCard('headline', e.target.value)}
-                />
-                <label htmlFor={`${baseId}-card-subline`}>Second line</label>
-                <input
-                  id={`${baseId}-card-subline`} className="input" type="text" maxLength={120} value={cardValue('subline')} disabled={disabled}
-                  onChange={(e) => changeCard('subline', e.target.value)}
-                />
                 <label htmlFor={`${baseId}-card-seconds`}>Length</label>
                 <select
                   id={`${baseId}-card-seconds`} className="select" value={cardValue('seconds')} disabled={disabled}
@@ -739,7 +729,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                   {END_CARD_SECONDS.map((seconds) => <option key={seconds} value={seconds}>{seconds} seconds</option>)}
                 </select>
               </div>
-              <p className="field-hint">Change its picture, or switch it off, under “End card” above.</p>
+              <p className="field-hint">Change its picture, or switch it off, under “End card” on this page.</p>
             </>
           )}
           {addingSound && (

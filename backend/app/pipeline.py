@@ -1489,8 +1489,28 @@ def build_stitch_audio_filter(
 END_CARD_MIN_SECONDS, END_CARD_MAX_SECONDS, END_CARD_DEFAULT_SECONDS = 1.5, 5.0, 2.5
 
 
-def _ass_text(text: str) -> str:
-    return (text or "").replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ").strip()
+# A picture whose shape is this close to the video's fills the frame (its edges are cropped a
+# little); any other picture is shown whole on black.
+END_CARD_FILL_TOLERANCE = 0.15
+
+
+def end_card_filter(width: int, height: int, picture_width: int = 0, picture_height: int = 0) -> str:
+    """
+    The ffmpeg filter that turns the end card picture into a frame of the video: the picture
+    alone, nothing drawn over it and nothing behind it. Unknown picture size: shown whole.
+    """
+    fills = False
+    if picture_width > 0 and picture_height > 0:
+        shape, frame = picture_width / picture_height, width / height
+        fills = abs(shape - frame) / frame <= END_CARD_FILL_TOLERANCE
+    if fills:
+        fit = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height}"
+    else:
+        fit = (
+            f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black"
+        )
+    return f"[0:v]{fit},setsar=1,format=yuv420p[card]"
 
 
 def make_end_card(
@@ -1500,61 +1520,51 @@ def make_end_card(
     height: int,
     fps: float,
     seconds: float = END_CARD_DEFAULT_SECONDS,
-    headline: str = "",
-    subline: str = "",
 ) -> str:
     """
-    A closing clip (picture only, no sound) made from a real product picture: the picture sits in
-    the upper part over a blurred, darkened copy of itself, with the headline and a smaller line
-    under it. Generated scenes can get a label wrong; this frame is always right.
+    A closing clip (picture only, no sound): the end card picture as it is, held for `seconds`.
+    Any text or styling is part of the picture itself (see edit_end_card_picture).
     """
     seconds = min(END_CARD_MAX_SECONDS, max(END_CARD_MIN_SECONDS, float(seconds or END_CARD_DEFAULT_SECONDS)))
     work_dir = os.path.dirname(os.path.abspath(output_path))
-    unit = min(width, height) / 1080.0
-    box_w, box_h = int(width * 0.78) // 2 * 2, int(height * 0.46) // 2 * 2
-    top = int(height * 0.12)
-    filters = [
-        f"[0:v]split=2[bgsrc][fgsrc]",
-        f"[bgsrc]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
-        f"boxblur=luma_radius={max(8, int(36 * unit))}:luma_power=2,eq=brightness=-0.22:saturation=0.85[bg]",
-        f"[fgsrc]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease[fg]",
-        f"[bg][fg]overlay=(W-w)/2:{top}+({box_h}-h)/2,setsar=1,format=yuv420p[card]",
-    ]
-    out_label = "[card]"
-    headline, subline = _ass_text(headline), _ass_text(subline)
-    if headline or subline:
-        def size(points: float) -> int:
-            return max(12, int(round(points * unit)))
-        margin_h = int(width * 0.08)
-        # Text block starts under the picture and stays above the area the apps' buttons cover.
-        y_head = top + box_h + int(height * 0.045)
-        y_sub = y_head + (size(84) * 2 + int(height * 0.02) if headline else 0)
-        ass = [
-            "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {width}", f"PlayResY: {height}", "WrapStyle: 0",
-            "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
-            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
-            "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
-            "MarginV, Encoding",
-            f"Style: Head,Montserrat,{size(76)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{size(4)},0,8,{margin_h},{margin_h},{y_head},1",
-            f"Style: Sub,Montserrat,{size(46)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{size(3)},0,8,{margin_h},{margin_h},{y_sub},1",
-            "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
-        ]
-        end = f"0:00:{seconds + 1:05.2f}"
-        if headline:
-            ass.append(f"Dialogue: 0,0:00:00.00,{end},Head,,0,0,0,,{{\\fad(250,0)}}{headline}")
-        if subline:
-            ass.append(f"Dialogue: 0,0:00:00.00,{end},Sub,,0,0,0,,{{\\fad(250,0)}}{subline}")
-        with open(os.path.join(work_dir, "end_card.ass"), "w", encoding="utf-8") as f:
-            f.write("\n".join(ass) + "\n")
-        filters.append("[card]subtitles=filename=end_card.ass[cardtext]")
-        out_label = "[cardtext]"
+    picture = cv2.imread(image_path)
+    picture_height, picture_width = picture.shape[:2] if picture is not None else (0, 0)
     _run_ffmpeg([
         "ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", f"{fps:.3f}", "-t", f"{seconds:.3f}",
-        "-i", os.path.abspath(image_path), "-filter_complex", ";".join(filters), "-map", out_label, "-an",
+        "-i", os.path.abspath(image_path),
+        "-filter_complex", end_card_filter(width, height, picture_width, picture_height), "-map", "[card]", "-an",
         "-r", f"{fps:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
         os.path.abspath(output_path),
     ], "Making the end card", cwd=work_dir)
     return output_path
+
+
+def build_end_card_edit_prompt(instruction: str, pictures: List[Dict[str, Any]]) -> str:
+    """The prompt for changing the end card picture. `pictures` are attached after the picture itself."""
+    return prompts.render(
+        "end_card.edit",
+        instruction=" ".join((instruction or "").split()),
+        pictures=_picture_lines(pictures, first_number=2),
+    )
+
+
+def edit_end_card_picture(
+    image_path: str,
+    output_path: str,
+    instruction: str,
+    aspect_ratio: str = "9:16",
+    reference_images: Optional[List[Dict[str, Any]]] = None,
+    image_model: Optional[str] = None,
+) -> str:
+    """
+    Changes the end card picture as asked ("put it on a dark marble table", "add 'Link in bio'
+    under the watch") with the image model, in the shape of the video so it fills the frame.
+    reference_images: the product pictures, so the product stays exact.
+    """
+    references = [r for r in (reference_images or []) if r.get("path") and os.path.exists(r["path"])]
+    contents: List[Any] = [_image_part(image_path)] + [_image_part(r["path"]) for r in references]
+    contents.append(build_end_card_edit_prompt(instruction, references))
+    return _draw_still(contents, output_path, aspect_ratio, "the end card", image_model)
 
 
 def stitch_videos(
@@ -1585,7 +1595,7 @@ def stitch_videos(
     "end" for the end card), "at" (seconds in that clip's file), "volume" (0 to 100)}]. Each is
     leveled and mixed in at its moment; see place_sounds for which are left out. `report` also
     receives "sounds": how many were mixed in.
-    end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
+    end_card: optional {"image_path", "seconds"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
     Picture: every clip is trimmed (with tight_cuts, the dead air before the first word and after the
@@ -1643,7 +1653,6 @@ def stitch_videos(
             card_path = make_end_card(
                 end_card["image_path"], os.path.join(work_dir, "end_card.mp4"), width, height, fps,
                 seconds=end_card.get("seconds") or END_CARD_DEFAULT_SECONDS,
-                headline=end_card.get("headline") or "", subline=end_card.get("subline") or "",
             )
             card = probe_media(card_path)
             card.update({"gain_db": 0.0, "trim_start": 0.0, "speech": []})
