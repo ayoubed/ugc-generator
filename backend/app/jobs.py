@@ -35,7 +35,9 @@ from app.pipeline import (
     asset_bible_lines,
     GenerationCancelled,
 )
-from app.voiceover import caption_word_times, narrated_scene, project_voice, revoiced_scene, scene_narration
+from app.voiceover import (
+    caption_word_times, narration_tail, narration_voice, project_voice, revoiced_scene, scene_narration, voiced_scene,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1139,7 +1141,11 @@ def _run_stitch_job_sync(
             )
         # A scene with a narration (a voice made from text in the editor) gets it as its only sound,
         # first: captions are timed on it, pauses are cut around it and the music dips under it.
+        # A narration longer than what is left of its scene carries on over the next scene.
+        edits = scene_edits(project_data, scenes_list)
         narrations: Dict[str, Dict[str, Any]] = {}
+        own_voices: Dict[int, Dict[str, Any]] = {}
+        tails: Dict[int, Dict[str, Any]] = {}      # position -> the end of the narration before it
         for position, (_, doc_id, data) in enumerate(scenes_list):
             narration = scene_narration(project_data, doc_id, data)
             if not narration:
@@ -1152,10 +1158,21 @@ def _run_stitch_job_sync(
                 raise ValueError(
                     f"Could not load the narration of scene {scene_numbers[position]}. Make it again in the editor."
                 ) from e
-            local_video_paths[position] = narrated_scene(
-                local_video_paths[position], narration_local, narration, os.path.join(temp_dir, f"narrated_{doc_id}.mp4")
-            )
             narrations[doc_id] = narration
+            own_voices[position] = narration_voice(narration, narration_local)
+            if position + 1 < len(scenes_list):
+                clip_seconds = float(probe_media(local_video_paths[position])["duration"])
+                kept_end = min(clip_seconds, float((edits[position] or {}).get("end", clip_seconds)))
+                tail = narration_tail(narration, kept_end)
+                if tail:
+                    next_start = float((edits[position + 1] or {}).get("start") or 0)
+                    tails[position + 1] = {"path": narration_local, "at": next_start, **tail}
+        for position, voice_over in own_voices.items():
+            doc_id = scenes_list[position][1]
+            local_video_paths[position] = voiced_scene(
+                local_video_paths[position], [voice_over] + ([tails[position]] if position in tails else []),
+                os.path.join(temp_dir, f"narrated_{doc_id}.mp4"),
+            )
 
         caption_words: List[Any] = [None] * len(scenes_list)
         if captions and elevenlabs.is_configured():
@@ -1177,12 +1194,19 @@ def _run_stitch_job_sync(
                 local_video_paths[position] = revoiced_scene(
                     uid, project_id, doc_id, data.get("activeAttempt"), local_video_paths[position], voice["id"], temp_dir
                 )
+        # A scene without a narration of its own that gets the end of the one before it: added to
+        # its own sound, after any re-voicing (which must not hear it).
+        for position, tail in tails.items():
+            if position not in own_voices:
+                doc_id = scenes_list[position][1]
+                local_video_paths[position] = voiced_scene(
+                    local_video_paths[position], [tail], os.path.join(temp_dir, f"tail_{doc_id}.mp4"), keep_own_sound=True,
+                )
         exact_timing = bool(captions) and any(caption_texts[doc_id].strip() for _, doc_id, _ in scenes_list) and all(
             caption_words[position] or placed_captions[doc_id] is not None
             for position, (_, doc_id, _) in enumerate(scenes_list) if caption_texts[doc_id].strip()
         )
 
-        edits = scene_edits(project_data, scenes_list)
         # Sound effects from the editor, each pinned to a moment of a scene (or of the end card).
         sounds = project_sounds(project_data)
         positions = {doc_id: position for position, (_, doc_id, _) in enumerate(scenes_list)}

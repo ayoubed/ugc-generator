@@ -6,7 +6,8 @@
  *   settings.narration.<scene id> = { at, trimStart, trimEnd, on }      set in the editor
  *
  * `at` is where the voice starts, in seconds of the scene's clip. The trims cut the voice's own
- * start and end. What would run past the end of the scene is not heard.
+ * start and end. A voice longer than what is left of its scene carries on over the next scene;
+ * what would run past the end of that one (or of the video) is not heard.
  */
 export const NARRATION_MIN_SECONDS = 0.1;
 export const PAUSE_HINT = 'Write [pause] or [pause 1.5] where the voice should wait.';
@@ -59,18 +60,36 @@ export function isNarrated(project, scene, saved = undefined) {
 
 /**
  * The part of the narration that is heard, on the timeline: { time, length } in timeline seconds,
- * or null when none of it falls in the kept part of its clip. clip: { at, start, end }.
+ * or null when none of it is. clip: { at, start, end }. `room`: the seconds of the next scene it
+ * may carry on over (0 for the last scene).
  */
-export function narrationSpan(clip, narration) {
+export function narrationSpan(clip, narration, room = 0) {
   const from = Math.max(narration.at, clip.start);
-  const to = Math.min(narration.at + narration.length, clip.end);
+  const to = Math.min(narration.at + narration.length, clip.end + Math.max(0, room));
   if (to - from <= 0.01) return null;
   return { time: clip.at + (from - clip.start), length: to - from };
 }
 
-/** How many seconds of the narration are lost because it runs past the end of its scene (0 = it fits). */
+/** How many seconds of the narration are still to be said when its scene ends (0 = it fits the scene). */
 export function narrationOverflow(clip, narration) {
   return Math.max(0, round(narration.at + narration.length - clip.end));
+}
+
+/** How many seconds are not heard at all: past the end of the next scene, or of the video. */
+export function narrationLost(clip, narration, room = 0) {
+  return Math.max(0, round(narrationOverflow(clip, narration) - Math.max(0, room)));
+}
+
+/**
+ * Where the player of the narration BEFORE this scene should be while this scene is at `clipTime`,
+ * or null when that narration is over (or never ran past its own scene). before: the clip the
+ * narration belongs to; clip: the one on screen. Same rule as the server's narration_tail.
+ */
+export function narrationTailClock(narration, before, clip, clipTime) {
+  const saidBefore = Math.max(0, before.end - narration.at);      // seconds of it heard in its own scene
+  const into = saidBefore + (clipTime - clip.start);
+  if (clipTime < clip.start || into >= narration.length || narrationOverflow(before, narration) <= 0.05) return null;
+  return narration.trimStart + into;
 }
 
 /**

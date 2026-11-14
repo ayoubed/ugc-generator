@@ -175,27 +175,67 @@ def scene_narration(
     }
 
 
-def narration_filter(narration: Dict[str, Any]) -> str:
-    """The ffmpeg filter that cuts the voice to its kept part and starts it at its place in the clip."""
+# Less than this past the end of the scene is not worth carrying into the next one.
+NARRATION_TAIL_MIN_SECONDS = 0.05
+
+
+def narration_voice(narration: Dict[str, Any], path: str) -> Dict[str, Any]:
+    """The narration as a voice on its own scene: its kept part, starting at its place in the clip."""
+    return {"path": path, "at": narration["at"], "start": narration["trimStart"], "end": narration["seconds"] - narration["trimEnd"]}
+
+
+def narration_tail(narration: Dict[str, Any], kept_end: float) -> Optional[Dict[str, float]]:
+    """
+    The part of the narration that is still to be said when its scene ends at `kept_end` (seconds
+    of the clip): {"start", "end"} in seconds of the recording, or None when it fits. That part
+    carries on over the next scene.
+    """
     end = narration["seconds"] - narration["trimEnd"]
-    delay = int(round(narration["at"] * 1000))
-    return (
-        f"[1:a]atrim=start={narration['trimStart']:.3f}:end={end:.3f},asetpts=PTS-STARTPTS,"
-        f"adelay={delay}:all=1,apad[voice]"
-    )
+    start = max(narration["trimStart"], narration["trimStart"] + (kept_end - narration["at"]))
+    if end - start < NARRATION_TAIL_MIN_SECONDS:
+        return None
+    return {"start": round(start, 3), "end": round(end, 3)}
 
 
-def narrated_scene(video_path: str, narration_path: str, narration: Dict[str, Any], output_path: str) -> str:
+def voices_filter(voices: List[Dict[str, Any]], keep_own_sound: bool) -> str:
     """
-    The same picture (copied, not re-encoded) with the narration as its only sound, as long as the
-    clip. The scene's own sound is dropped: it would carry the video model's own voice.
+    The ffmpeg filter that puts the voices on a clip: each cut to its part ("start" to "end" of its
+    recording) and started at "at" seconds of the clip. Input 0 is the clip, inputs 1.. the voices.
     """
-    duration = float(probe_media(video_path)["duration"])
+    parts, labels = [], []
+    if keep_own_sound:
+        labels.append("[0:a]")
+    for index, voice in enumerate(voices, start=1):
+        delay = int(round(max(0.0, float(voice["at"])) * 1000))
+        parts.append(
+            f"[{index}:a]atrim=start={voice['start']:.3f}:end={voice['end']:.3f},asetpts=PTS-STARTPTS,"
+            f"adelay={delay}:all=1[v{index}]"
+        )
+        labels.append(f"[v{index}]")
+    if len(labels) == 1:
+        parts.append(f"{labels[0]}apad[voice]")
+    else:
+        parts.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:normalize=0,apad[voice]")
+    return ";".join(parts)
+
+
+def voiced_scene(video_path: str, voices: List[Dict[str, Any]], output_path: str, keep_own_sound: bool = False) -> str:
+    """
+    The same picture (copied, not re-encoded), as long as the clip, with the voices as its sound.
+    Without keep_own_sound the scene's own sound is dropped (it would carry the video model's own
+    voice); with it the voices are added to it, for a scene that only gets the end of the
+    narration before it.
+    """
+    clip = probe_media(video_path)
+    duration = float(clip["duration"])
+    own = keep_own_sound and bool(clip.get("has_audio"))
+    command = ["ffmpeg", "-y", "-i", video_path]
+    for voice in voices:
+        command += ["-i", voice["path"]]
     _run_ffmpeg(
-        ["ffmpeg", "-y", "-i", video_path, "-i", narration_path, "-filter_complex", narration_filter(narration),
-         "-map", "0:v:0", "-map", "[voice]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-         "-t", f"{max(0.05, duration):.3f}", output_path],
+        command + ["-filter_complex", voices_filter(voices, own),
+                   "-map", "0:v:0", "-map", "[voice]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                   "-t", f"{max(0.05, duration):.3f}", output_path],
         "Putting the narration on the scene",
     )
     return output_path
-

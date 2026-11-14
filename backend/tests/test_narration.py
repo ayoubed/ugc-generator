@@ -7,7 +7,7 @@ import pytest
 
 from app import elevenlabs, jobs, voiceover
 from app.routes import narration as routes
-from app.voiceover import narration_filter, scene_narration
+from app.voiceover import narration_tail, narration_voice, scene_narration, voices_filter
 from tests.test_elevenlabs import stitch  # noqa: F401  (a fixture: the stitch job with its services replaced)
 
 BASE = "users/u1/projects/p1/"
@@ -78,8 +78,25 @@ def test_bad_numbers_and_trims_that_leave_nothing_are_put_right():
 
 
 def test_the_filter_cuts_the_voice_and_starts_it_at_its_place():
-    text = narration_filter({"seconds": 4.0, "at": 1.25, "trimStart": 0.5, "trimEnd": 1.0})
+    voice = narration_voice({"seconds": 4.0, "at": 1.25, "trimStart": 0.5, "trimEnd": 1.0}, "n.mp3")
+    assert voice == {"path": "n.mp3", "at": 1.25, "start": 0.5, "end": 3.0}
+    text = voices_filter([voice], keep_own_sound=False)
     assert "atrim=start=0.500:end=3.000" in text and "adelay=1250:all=1" in text and text.endswith("apad[voice]")
+    assert "amix" not in text and "[0:a]" not in text
+
+
+def test_several_voices_and_the_scene_own_sound_are_mixed():
+    tail = {"path": "n.mp3", "at": 0.0, "start": 2.0, "end": 3.0}
+    assert "[0:a][v1]amix=inputs=2" in voices_filter([tail], keep_own_sound=True)
+    assert "[v1][v2]amix=inputs=2" in voices_filter([tail, tail], keep_own_sound=False)
+
+
+def test_what_is_left_to_say_when_the_scene_ends_carries_on():
+    told = {"seconds": 10.0, "at": 1.0, "trimStart": 0.5, "trimEnd": 0.5}          # 9s kept, heard from 1s to 10s
+    assert narration_tail(told, 8.0) == {"start": 7.5, "end": 9.5}                # 7s were said in the scene
+    assert narration_tail(told, 10.0) is None and narration_tail(told, 12.0) is None
+    assert narration_tail(told, 9.98) is None                                     # a blink is not worth it
+    assert narration_tail(told, 0.5) == {"start": 0.5, "end": 9.5}                # the scene ends before it starts: all of it
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
@@ -89,7 +106,7 @@ def test_the_scene_keeps_its_picture_and_length_and_gets_the_voice_as_its_sound(
     run("-f", "lavfi", "-i", "color=c=gray:s=64x64:d=3", "-f", "lavfi", "-i", "sine=frequency=300:duration=3",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", video)
     run("-f", "lavfi", "-i", "sine=frequency=900:duration=6", voice)             # longer than the scene: its end is cut
-    voiceover.narrated_scene(video, voice, {"seconds": 6.0, "at": 1.0, "trimStart": 0.5, "trimEnd": 0.0}, out)
+    voiceover.voiced_scene(video, [narration_voice({"seconds": 6.0, "at": 1.0, "trimStart": 0.5, "trimEnd": 0.0}, voice)], out)
     info = voiceover.probe_media(out)
     assert info["has_audio"] and abs(info["duration"] - 3.0) < 0.15
 
@@ -102,6 +119,10 @@ def test_the_scene_keeps_its_picture_and_length_and_gets_the_voice_as_its_sound(
         return float(result.stderr.split("mean_volume:")[1].split("dB")[0])
 
     assert loudness(0.1, 0.6) < -60 and loudness(1.5, 1.0) > -30
+
+    # With the scene's own sound kept, it is heard from the start and the voice is added to it.
+    voiceover.voiced_scene(video, [{"path": voice, "at": 0.0, "start": 3.0, "end": 4.0}], out, keep_own_sound=True)
+    assert loudness(1.5, 1.0) > -30 and abs(voiceover.probe_media(out)["duration"] - 3.0) < 0.15
 
 
 # --- making and removing one --------------------------------------------------------------------------
@@ -179,14 +200,15 @@ def test_removing_it_gives_the_scene_its_own_sound_back(studio):
 
 def test_the_stitch_puts_the_narration_on_its_scene_and_times_captions_on_it(stitch, fake_db, monkeypatch):
     put = []
-    monkeypatch.setattr(jobs, "narrated_scene", lambda video, voice, narration, out: put.append(narration) or out)
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: put.append((voices, keep_own_sound)) or out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 8.0, "has_audio": True})
     keys = []
     monkeypatch.setattr(jobs, "caption_word_times", lambda ref, data, attempt, text, path, work, sid: keys.append((sid, attempt, path)) or [("w", 0.0, 0.5)])
     fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})
     project, seen = stitch({"voice": {"id": "v1", "name": "Ana"}, "narration": {"0": {"at": 1.0, "trimEnd": 0.5}}})
 
     assert project["status"] == "completed"
-    assert [(n["at"], n["trimEnd"]) for n in put] == [(1.0, 0.5)]
+    assert put == [([{"path": put[0][0][0]["path"], "at": 1.0, "start": 0.0, "end": 3.5}], False)]   # it fits: nothing carries on
     assert seen["stitched"]["paths"][0].endswith("narrated_0.mp4")
     assert seen["revoiced"] == [("1", "v1")]                           # the narrated scene is not re-voiced
     assert keys[0][1].startswith("narration:") and keys[0][2].endswith("narrated_0.mp4")
@@ -195,8 +217,44 @@ def test_the_stitch_puts_the_narration_on_its_scene_and_times_captions_on_it(sti
 
 
 def test_a_narration_switched_off_leaves_the_scene_as_it_is(stitch, fake_db, monkeypatch):
-    monkeypatch.setattr(jobs, "narrated_scene", lambda *a: pytest.fail("the narration is off"))
+    monkeypatch.setattr(jobs, "voiced_scene", lambda *a, **k: pytest.fail("the narration is off"))
     fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})
     project, seen = stitch({"narration": {"0": {"on": False}}})
     assert not seen["stitched"]["paths"][0].endswith("narrated_0.mp4")
     assert project["finalVideos"].values[-1]["narration"] == {}
+
+
+def test_a_narration_longer_than_its_scene_carries_on_over_the_next_one(stitch, fake_db, monkeypatch):
+    put = []
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: put.append((video, voices, keep_own_sound)) or out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 3.0, "has_audio": True})
+    fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})   # 4s long
+    project, seen = stitch({"voice": {"id": "v1", "name": "Ana"}, "edits": {"1": {"attempt": 1, "start": 0.5}}})
+
+    (first_video, first_voices, first_keep), (second_video, second_voices, second_keep) = put
+    assert [(v["at"], v["start"], v["end"]) for v in first_voices] == [(0.0, 0.0, 4.0)] and first_keep is False
+    # Scene 2 is re-voiced first, then gets the last second, from where its kept part starts, over its own sound.
+    assert second_video == "revoiced_1.mp4" and second_keep is True
+    assert [(v["at"], v["start"], v["end"]) for v in second_voices] == [(0.5, 3.0, 4.0)]
+    assert seen["stitched"]["paths"][1].endswith("tail_1.mp4")
+
+
+def test_two_narrated_scenes_in_a_row_share_the_second_ones_sound(stitch, fake_db, monkeypatch):
+    put = []
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: put.append((voices, keep_own_sound)) or out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 3.0, "has_audio": True})
+    scenes = fake_db.collection("projects").document("p1").collection("scenes")
+    scenes.document("0").update({"narration": MADE})
+    scenes.document("1").update({"narration": {**MADE, "storageRef": f"{BASE}scenes/1/narration_b.mp3", "seconds": 2.0}})
+    stitch({})
+    assert len(put) == 2 and [len(voices) for voices, _ in put] == [1, 2]             # its own voice, and the end of scene 1's
+    assert put[1][1] is False
+
+
+def test_the_last_scene_has_nowhere_to_carry_on(stitch, fake_db, monkeypatch):
+    put = []
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: put.append(voices) or out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 3.0, "has_audio": True})
+    fake_db.collection("projects").document("p1").collection("scenes").document("1").update({"narration": MADE})
+    stitch({})
+    assert len(put) == 1 and len(put[0]) == 1

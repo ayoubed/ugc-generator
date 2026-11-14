@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  changeNarration, isNarrated, narrationKey, narrationClock, narrationOverflow, narrationPlace, narrationSpan, sceneNarration, withoutPauses,
+  changeNarration, isNarrated, narrationKey, narrationLost, narrationTailClock, narrationClock, narrationOverflow, narrationPlace, narrationSpan, sceneNarration, withoutPauses,
 } from './narration';
 
 const made = { text: 'Line.', voiceName: 'Ana', storageRef: 'n.mp3', url: 'https://x/n.mp3', seconds: 4 };
@@ -53,6 +53,26 @@ describe('narration', () => {
     const narration = sceneNarration(project({ at: 2 }), scene);
     expect(narrationOverflow({ at: 0, start: 0, end: 8 }, narration)).toBe(0);
     expect(narrationOverflow({ at: 0, start: 0, end: 5 }, narration)).toBe(1);
+  });
+
+  it('carries on over the next scene when it is longer than what is left of its own', () => {
+    const clip = { at: 10, start: 0, end: 3 };
+    const narration = sceneNarration(project({ at: 1 }), scene);                    // 4s, heard from 1s: 2s too long
+    expect(narrationSpan(clip, narration)).toEqual({ time: 11, length: 2 });        // no next scene: cut at the end
+    expect(narrationSpan(clip, narration, 5)).toEqual({ time: 11, length: 4 });     // drawn across the boundary
+    expect(narrationSpan(clip, narration, 1)).toEqual({ time: 11, length: 3 });     // a short next scene cuts it
+    expect([narrationLost(clip, narration), narrationLost(clip, narration, 5), narrationLost(clip, narration, 1)]).toEqual([2, 0, 1]);
+  });
+
+  it('knows where the player is while the next scene is on screen', () => {
+    const before = { at: 0, start: 0, end: 3 };
+    const next = { at: 3, start: 0.5, end: 5 };                                     // its first half second is cut
+    const narration = sceneNarration(project({ at: 1, trimStart: 0.5 }), { ...scene, narration: { ...made, seconds: 4.5 } });
+    expect(narrationTailClock(narration, before, next, 0.5)).toBe(2.5);             // 2s were said in its own scene
+    expect(narrationTailClock(narration, before, next, 1.5)).toBe(3.5);
+    expect(narrationTailClock(narration, before, next, 2.5)).toBeNull();            // all 4s are said
+    const fits = sceneNarration(project({ at: 0 }), { ...scene, narration: { ...made, seconds: 2 } });
+    expect(narrationTailClock(fits, before, next, 0.5)).toBeNull();
   });
 
   it('knows where its player should be for a moment of the clip', () => {

@@ -811,11 +811,39 @@ describe('narration: a voice made from text', () => {
     await waitFor(() => expect(saved()).toEqual(['p1', { 'narration.0': { at: 1.5, trimStart: 0, trimEnd: 1, on: true } }]), { timeout: 2000 });
   });
 
-  it('warns when the voice runs past the end of the scene', async () => {
+  it('carries on over the next scene when it is longer than what is left of its own, and shows it', async () => {
     narrated({ narration: { 0: { at: 3 } } });
     await userEvent.click(block());
-    expect(screen.getByText(/runs 1\.0s past the end of the scene/)).toBeTruthy();
-    expect(width(block())).toBe(`${2 * PPS}px`);                          // only the part that is heard
+    expect(screen.getByText(/The voice is 3\.0s: it carries on for 1\.0s over scene 2\./)).toBeTruthy();
+    expect([left(block()), width(block())]).toEqual([`${3 * PPS}px`, `${3 * PPS}px`]);   // drawn across the boundary
+  });
+
+  it('warns about the part that runs past the end of the video', async () => {
+    show({ settings: { voice: VOICE, narration: { 1: { at: 3 } } }, scenes: list(scene('0'), scene('1', { narration: MADE })) });
+    const last = track('Voice track').getByRole('button', { name: /^Narration of scene 2/ });
+    await userEvent.click(last);
+    expect(screen.getByText(/runs 1\.0s past the end of the video: that part is not heard/)).toBeTruthy();
+    expect(width(last)).toBe(`${2 * PPS}px`);                             // only the part that is heard
+  });
+
+  it('keeps talking in the preview when the next scene comes on', async () => {
+    narrated({ narration: { 0: { at: 3 } } });
+    const voice = screen.getByTestId('narration-0');
+    voice.play = vi.fn(async () => {});
+    voice.pause = vi.fn();
+    Object.defineProperty(voice, 'paused', { value: true, configurable: true, writable: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 5.5 * PPS, pointerId: 1 });   // half a second into scene 2
+    fireEvent.pointerUp(screen.getByTestId('editor-ruler'), { pointerId: 1 });
+    expect(current().getAttribute('aria-label')).toBe('Preview: scene 2');
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    at(current(), 0.5);
+    fireEvent.timeUpdate(current());
+    expect(voice.currentTime).toBe(2.5);                                  // 2s were said in scene 1
+    expect(voice.play).toHaveBeenCalled();
+    at(current(), 1.5);
+    fireEvent.timeUpdate(current());
+    expect(voice.currentTime).toBe(2.5);                                  // all of it is said: left alone, and stopped
   });
 
   it('slides against the picture when dragged, and is saved when let go', async () => {

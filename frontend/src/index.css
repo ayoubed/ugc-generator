@@ -3439,6 +3439,7 @@ button.tl-block { cursor: pointer; }
   cursor: inherit;
 }
 .tl-block.is-narration {
+  z-index: 1;   /* it may run on over the next scene's voice */
   background: var(--color-accent-light);
   border-color: var(--color-accent-border);
   cursor: grab;

@@ -112,7 +112,8 @@ Cloud Run) to switch on two things at stitch time:
   video, in place of the sound of its take. The text is the narration's own (the script and the
   caption stay as they are) and `[pause]` or `[pause 1.5]` adds a silence. The voice is a block on
   the Voice track: dragged to slide it against the picture, trimmed in its panel, which also says
-  whether it fits the scene. The stitch puts it on the scene first, so captions are timed on it.
+  whether it fits the scene. A voice longer than what is left of its scene carries on over the
+  next scene. The stitch puts it on the scene first, so captions are timed on it.
   Data: `scene.narration` (made by the server) and `settings.narration.<id> = {at, trimStart,
   trimEnd, on}`. Code: `backend/app/routes/narration.py`, `voiceover.scene_narration`,
   `frontend/src/utils/narration.js`.

@@ -13,7 +13,7 @@ import {
   MAX_SOUNDS, SOUND_DEFAULT_VOLUME, SOUND_IDEAS, previewSoundGain, projectSounds, soundPlace, soundTime,
 } from '../utils/sounds';
 import {
-  PAUSE_HINT, changeNarration, narrationClock, narrationOverflow, narrationSpan, sceneNarration,
+  PAUSE_HINT, changeNarration, narrationClock, narrationLost, narrationOverflow, narrationSpan, narrationTailClock, sceneNarration,
 } from '../utils/narration';
 import {
   CAPTION_BLOCKS_PER_SCENE, CAPTION_BLOCK_DEFAULT_SECONDS, CAPTION_BLOCK_MIN_SECONDS, blockSpan, blocksOfScene, changeBlock,
@@ -530,18 +530,33 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const narrated = () => (current ? activeNarration(current.scene) : null);
   const narrator = () => (narrated() ? narrators.current[current.id] || null : null);
   const dub = () => (current && !narrated() && revoicedUrl(project, current.scene) ? dubs.current[current.id] || null : null);
-  // Keeps the narration's player where the picture is: silent before it starts and after its kept part.
-  const syncNarration = (clipTime, { jump = false } = {}) => {
-    const narration = narrated();
-    const element = narrator();
-    if (!narration || !element) return;
-    const spot = narrationClock(narration, clipTime);
+  // The seconds of the next scene a narration may carry on over (0 for the last scene).
+  const roomAfter = (clip) => {
+    const next = timeline.clips[timeline.clips.findIndex((item) => item.id === clip.id) + 1];
+    return next ? next.length : 0;
+  };
+  const keepAt = (element, spot, jump) => {
     if (spot === null) {
       if (!element.paused) element.pause?.();
       return;
     }
     if (jump || element.paused || Math.abs(element.currentTime - spot) > VOICE_DRIFT_SECONDS) element.currentTime = spot;
     if (playing && element.paused !== false) element.play?.()?.catch?.(() => {});
+  };
+  // Keeps the narrations' players where the picture is: the scene's own (silent before it starts
+  // and after its kept part), and the end of the one before it when that runs on into this scene.
+  const syncNarration = (clipTime, { jump = false } = {}) => {
+    const narration = narrated();
+    const element = narrator();
+    if (narration && element) keepAt(element, narrationClock(narration, clipTime), jump);
+    const before = place ? timeline.clips[place.index - 1] : null;
+    const told = before ? activeNarration(before.scene) : null;
+    const tail = told ? narrators.current[before.id] : null;
+    if (!tail) return;
+    const edit = editOf(before.scene);
+    tail.muted = Boolean(edit?.muted);
+    tail.volume = previewGain(edit?.volume);
+    keepAt(tail, narrationTailClock(told, before, current, clipTime), jump);
   };
   // How loud the scene on screen is: its own sound, or the chosen voice in its place.
   const applySound = () => {
@@ -620,7 +635,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   useEffect(() => {
     Object.entries(videos.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
     Object.entries(dubs.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
-    Object.entries(narrators.current).forEach(([id, element]) => { if (id !== currentId) element?.pause?.(); });
+    // The narration of the scene before may still be talking: the seek below keeps or stops it.
+    const beforeId = place ? timeline.clips[place.index - 1]?.id : null;
+    Object.entries(narrators.current).forEach(([id, element]) => { if (id !== currentId && id !== beforeId) element?.pause?.(); });
     const element = currentId ? videos.current[currentId] : null;
     if (element && element.readyState >= 1) applySeek();   // not loaded yet: its loadedmetadata does it
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -801,6 +818,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const voiceClip = selected?.type === 'voice' ? timeline.clips.find((clip) => clip.id === selected.id) : null;
   const voiceNarration = voiceClip ? narrationOf(voiceClip.scene) : null;
   const voiceOverflow = voiceClip && voiceNarration ? narrationOverflow(voiceClip, voiceNarration) : 0;
+  const voiceLost = voiceClip && voiceNarration ? narrationLost(voiceClip, voiceNarration, roomAfter(voiceClip)) : 0;
+  const voiceNext = voiceClip ? timeline.clips[timeline.clips.findIndex((clip) => clip.id === voiceClip.id) + 1] : null;
   const addingSound = selected?.type === 'newSound' && soundsOffered;
   const showSounds = soundsOffered || sounds.length > 0;
 
@@ -1025,10 +1044,12 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                     />
                     Use this voice in place of the scene&apos;s own sound
                   </label>
-                  <p className={`field-hint ${voiceOverflow > 0 ? 'is-warning' : ''}`} role="status">
-                    {voiceOverflow > 0
-                      ? `The voice is ${voiceNarration.length.toFixed(1)}s and runs ${voiceOverflow.toFixed(1)}s past the end of the scene: that part is not heard. Start it earlier, cut it, or shorten the text.`
-                      : `The voice is ${voiceNarration.length.toFixed(1)}s and fits the scene (${voiceClip.length.toFixed(1)}s). Drag it on the Voice track to slide it against the picture.`}
+                  <p className={`field-hint ${voiceLost > 0 ? 'is-warning' : ''}`} role="status">
+                    {voiceOverflow <= 0 && `The voice is ${voiceNarration.length.toFixed(1)}s and fits the scene (${voiceClip.length.toFixed(1)}s). Drag it on the Voice track to slide it against the picture.`}
+                    {voiceOverflow > 0 && voiceLost <= 0 && `The voice is ${voiceNarration.length.toFixed(1)}s: it carries on for ${voiceOverflow.toFixed(1)}s over scene ${voiceNext.label}.`}
+                    {voiceLost > 0 && (voiceNext
+                      ? `The voice is ${voiceNarration.length.toFixed(1)}s: it carries on over scene ${voiceNext.label}, but its last ${voiceLost.toFixed(1)}s run past the end of that scene and are not heard. Start it earlier, cut it, or shorten the text.`
+                      : `The voice is ${voiceNarration.length.toFixed(1)}s and runs ${voiceLost.toFixed(1)}s past the end of the video: that part is not heard. Start it earlier, cut it, or shorten the text.`)}
                     {voiceNarration.voiceName && ` Read by ${voiceNarration.voiceName}.`}
                   </p>
                 </>
@@ -1299,7 +1320,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                 const narration = activeNarration(clip.scene);
                 if (narration) {
                   // The narration in place of the take's voice: where it is heard, and draggable.
-                  const span = narrationSpan(clip, narration);
+                  // Drawn as far as it is heard, also over the next scene when it runs on.
+                  const span = narrationSpan(clip, narration, roomAfter(clip));
                   const isSelected = voiceClip?.id === clip.id;
                   return (
                     <button
