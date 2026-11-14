@@ -69,8 +69,8 @@ def test_scene_context_uses_saved_guidelines_and_no_music_tags_in_voice_only_mod
         },
         "guidelines": {"camera_specifics": "ignored, settings win"},
     })
-    assert parts[0] == "Global Video Idea: A mug"
-    assert "Video Context: A kitchen." in parts
+    assert parts[0] == "Video Context: A kitchen."
+    assert not any("A mug" in p for p in parts)
     assert "Products and props: One steel mug" in parts
     assert any(p.endswith(": Phone front camera") for p in parts)
     assert any(p.endswith(": Clear voice") for p in parts)
@@ -227,3 +227,11 @@ def test_a_new_take_cancelled_on_the_scene_stops_the_run_quietly(fake_db, monkey
     state = fake_db.store["projects/p1"]["generateAll"]
     assert state["status"] == "cancelled"
     assert fake_db.store["projects/p1/scenes/1"]["attempt"] == 1
+
+
+def test_the_idea_reaches_a_scene_only_when_there_is_no_video_context():
+    # The idea often holds a whole script, and the video model speaks lines it finds there.
+    idea = "A watch ad.\nscript:\nWe broke all three."
+    with_context = jobs.build_global_context({"idea": idea, "settings": {"videoContext": "A narrator over watch shots."}})
+    assert not any("We broke all three" in p for p in with_context)
+    assert jobs.build_global_context({"idea": idea, "settings": {}}) == [f"Global Video Idea: {idea}"]

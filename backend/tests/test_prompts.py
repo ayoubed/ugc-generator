@@ -58,6 +58,7 @@ def test_a_variant_replaces_a_prompt_only_inside_its_block():
 def test_the_code_uses_the_files():
     assert pipeline.REALISM_INSTRUCTION == prompts.text("video.realism")
     assert pipeline.scene_speech_rule("") == prompts.text("video.silent_scene")
+    assert pipeline.scene_speech_rule("Hi.") == prompts.text("video.spoken_words")
     assert pipeline.product_name_rule(None) == prompts.text("product_name.missing")
 
 

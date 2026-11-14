@@ -76,10 +76,16 @@ def test_the_stitch_keeps_a_numeric_music_volume():
     assert "volume=0.325" in graph
 
 
+def test_a_scene_with_a_script_is_told_to_say_only_that_line():
+    rule = scene_speech_rule("Hello there.")
+    assert 'under "What They Say"' in rule and "nothing is said before or after them" in rule
+    assert "never speak it here" in rule
+
+
 # --- a scene with nothing to say, and realism -----------------------------------------------------
 
 def test_a_scene_without_a_script_is_told_to_stay_silent():
-    assert scene_speech_rule("Hello there.") == ""
+    assert "Nobody speaks" not in scene_speech_rule("Hello there.")
     for empty in ("", "   ", None):
         assert "Nobody speaks in this scene" in scene_speech_rule(empty)
         assert "Do not repeat lines from other scenes" in scene_speech_rule(empty)

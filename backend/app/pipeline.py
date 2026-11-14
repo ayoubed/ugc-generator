@@ -292,14 +292,16 @@ def scene_audio_instruction(scene_audio: Optional[str]) -> str:
 
 
 SILENT_SCENE_INSTRUCTION = prompts.text("video.silent_scene")
+SPOKEN_WORDS_INSTRUCTION = prompts.text("video.spoken_words")
 
 
 def scene_speech_rule(script: Optional[str]) -> str:
     """
-    Extra line for a scene without a script. Left alone, the video model fills the silence by
-    speaking anyway, often repeating a line it was given for the whole video.
+    Extra line about what is said in a scene. Without a script: nobody speaks (left alone, the video
+    model fills the silence, often repeating a line it was given for the whole video). With a script:
+    only that line is said (the model otherwise adds a line it finds elsewhere in the prompt).
     """
-    return "" if (script or "").strip() else SILENT_SCENE_INSTRUCTION
+    return SPOKEN_WORDS_INSTRUCTION if (script or "").strip() else SILENT_SCENE_INSTRUCTION
 
 
 # Two things generated product shots get wrong often enough to say every time.
@@ -537,6 +539,23 @@ def speech_match(script: str, spoken: str) -> float:
 
 # Below this, the take is flagged as not saying the script.
 SPEECH_MATCH_THRESHOLD = 0.85
+# A run of at least this many spoken words that are not in the script is flagged as an added line.
+EXTRA_WORDS_FLAGGED = 3
+
+
+def extra_spoken_words(script: str, spoken: str) -> str:
+    """The longest run of words that were said but are not in the script ('' when there is none)."""
+    a, b = _words(script), _words(spoken)
+    if not a or not b:
+        return ""
+    longest: List[str] = []
+    for tag, a1, a2, b1, b2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        # Only words put in where the script has none. A reworded stretch is not counted: "$299"
+        # heard as "two hundred ninety-nine dollars" is the script, said.
+        added = b[b1:b2] if tag == "insert" else []
+        if len(added) > len(longest):
+            longest = added
+    return " ".join(longest)
 
 
 def _image_part(path: str):
@@ -609,6 +628,10 @@ def check_take(
             "kind": "script",
             "detail": "What is said differs from the script." if spoken else "Nobody speaks, but the scene has a script.",
         })
+    else:
+        extra = extra_spoken_words(script, spoken)
+        if len(extra.split()) >= EXTRA_WORDS_FLAGGED:
+            issues.insert(0, {"kind": "script", "detail": f'Says words that are not in the script: "{extra}".'})
     return {"ok": not issues, "spokenText": spoken, "speechMatch": match, "issues": issues[:8]}
 
 

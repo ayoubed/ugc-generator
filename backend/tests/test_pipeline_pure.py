@@ -166,3 +166,43 @@ def test_a_missing_model_key_is_reported(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", '""')
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
         pipeline.get_client()
+
+
+def test_a_line_added_after_the_script_is_found_even_when_most_words_match():
+    script = "Meet the Carré Royale, a dress watch with zero apologies. They said dress watches must be Swiss, must be thin, must cost a month’s rent."
+    spoken = script + " We broke all three."
+    assert pipeline.speech_match(script, spoken) >= pipeline.SPEECH_MATCH_THRESHOLD
+    assert pipeline.extra_spoken_words(script, spoken) == "we broke all three"
+
+
+def test_rewording_and_small_slips_are_not_an_added_line():
+    assert pipeline.extra_spoken_words("Only $299 today.", "Only two hundred ninety nine dollars today.") == ""
+    assert pipeline.extra_spoken_words("Tell them good eye.", "Tell them, uh, good eye.") == "uh"
+    assert pipeline.extra_spoken_words("Hello there.", "Hello there.") == ""
+    assert pipeline.extra_spoken_words("", "Anything at all here.") == ""
+
+
+def test_the_take_check_flags_a_take_that_adds_a_line(tmp_path, monkeypatch):
+    video = tmp_path / "take.mp4"; video.write_bytes(b"video")
+    said = {"text": ""}
+
+    class Models:
+        def generate_content(self, model, contents, config):
+            class Response:
+                text = '{"spoken_text": "%s", "issues": []}' % said["text"]
+            return Response()
+
+    class Client:
+        models = Models()
+
+    monkeypatch.setattr(pipeline, "get_client", lambda: Client())
+    monkeypatch.setattr(pipeline, "upload_to_files_api", lambda client, path, mime, timeout_seconds=0: "video-file")
+    script = "They said dress watches must be Swiss, must be thin, must cost a month's rent."
+
+    said["text"] = script + " We broke all three."
+    result = pipeline.check_take(str(video), script=script)
+    assert result["ok"] is False
+    assert result["issues"][0] == {"kind": "script", "detail": 'Says words that are not in the script: "we broke all three".'}
+
+    said["text"] = script
+    assert pipeline.check_take(str(video), script=script)["ok"] is True

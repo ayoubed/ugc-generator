@@ -218,13 +218,15 @@ def build_global_context(project_data: Dict[str, Any]) -> List[str]:
     guidelines = project_data.get("guidelines") or {}
 
     parts: List[str] = []
+    # The idea is what the user typed for the script writer, and often holds a whole script. The
+    # video model speaks lines it finds there, so a scene only gets it when the project has no
+    # video context (the summary the script writer made of it).
     idea = (project_data.get("idea") or "").strip()
-    if idea:
-        parts.append(f"Global Video Idea: {idea}")
-
     video_context = str(settings.get("videoContext") or "").strip()
     if video_context:
         parts.append(f"Video Context: {video_context}")
+    elif idea:
+        parts.append(f"Global Video Idea: {idea}")
 
     # The same fixed descriptions in every scene keep people, products and places from drifting.
     parts.extend(asset_bible_lines(settings.get("assetBible")))
