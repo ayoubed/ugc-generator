@@ -17,6 +17,7 @@ import {
   contextPictureCount,
   continuityNote,
   defaultImageSource,
+  STEP,
   maxReachableStep,
   sceneChangesSinceTake,
   isSceneSkipped,
@@ -390,7 +391,7 @@ function EditScenes({ projectId: id }) {
         <FinalVideoBanner
           project={project}
           scenes={scenes}
-          onOpenExport={() => goTo(stepPath(id, 4))}
+          onOpenExport={() => goTo(stepPath(id, STEP.VIDEO))}
           outdatedHint="Make new takes of the scenes you changed on the Generate step, then stitch again on the Video step."
         />
 
@@ -474,8 +475,8 @@ function EditScenes({ projectId: id }) {
                       : `Scenes ${changedScenes.join(', ')} need new takes`}
                   </span>
                 )}
-                <button type="button" className="btn btn-primary btn-lg" onClick={() => goTo(stepPath(id, 3))} disabled={navigating}>
-                  {navigating ? 'Saving…' : 'Generate videos'}
+                <button type="button" className="btn btn-primary btn-lg" onClick={() => goTo(stepPath(id, STEP.STORYBOARD))} disabled={navigating}>
+                  {navigating ? 'Saving…' : 'Storyboard'}
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <polyline points="9 18 15 12 9 6" />
                   </svg>

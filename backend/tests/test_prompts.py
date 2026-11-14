@@ -60,6 +60,7 @@ def test_the_code_uses_the_files():
     assert pipeline.scene_speech_rule("") == prompts.text("video.silent_scene")
     assert pipeline.scene_speech_rule("Hi.") == prompts.text("video.spoken_words")
     assert pipeline.product_name_rule(None) == prompts.text("product_name.missing")
+    assert prompts.text("storyboard.frame.product_led") in pipeline.build_storyboard_frame_prompt("x", [], product_led=True)
 
 
 # --- the automatic checks -------------------------------------------------------------------------

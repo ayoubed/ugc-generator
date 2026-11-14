@@ -515,9 +515,10 @@ export function formatSceneList(numbers) {
 
 /**
  * Highest step the user can jump to from the stepper.
- * Steps: 1 Idea, 2 Script, 3 Generate, 4 Video (captions, cuts, music, stitch, watch, download).
+ * Steps: 1 Idea, 2 Script, 3 Storyboard (optional: pictures of each scene before any video),
+ * 4 Generate, 5 Video (captions, cuts, music, stitch, watch, download).
  */
-export const STEP = { IDEA: 1, SCRIPT: 2, GENERATE: 3, VIDEO: 4 };
+export const STEP = { IDEA: 1, SCRIPT: 2, STORYBOARD: 3, GENERATE: 4, VIDEO: 5 };
 
 export function maxReachableStep(project, scenes) {
   if (hasFinalVideo(project) || isStitching(project)) return STEP.VIDEO;
@@ -525,7 +526,7 @@ export function maxReachableStep(project, scenes) {
   return 1;
 }
 
-const STEP_ROUTES = { 1: 'create', 2: 'scenes', 3: 'generate', 4: 'video' };
+const STEP_ROUTES = { 1: 'create', 2: 'scenes', 3: 'storyboard', 4: 'generate', 5: 'video' };
 
 /** Route of a stepper step for a project. */
 export function stepPath(projectId, step) {

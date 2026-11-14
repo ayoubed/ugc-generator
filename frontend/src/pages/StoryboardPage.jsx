@@ -1,0 +1,154 @@
+import React, { useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import Layout from '../components/Layout';
+import Stepper from '../components/Stepper';
+import LoadingSpinner from '../components/LoadingSpinner';
+import StoryboardSceneCard from '../components/StoryboardSceneCard';
+import { useProject, useScenes } from '../hooks/useProject';
+import { useAuth } from '../hooks/useAuth';
+import { addStoryboardFrame } from '../services/api';
+import { STEP, isSceneSkipped, maxReachableStep, sceneLabels, stepPath } from '../utils/projectProgress';
+import { framesInOrder, hasLookFrame, runInPool, sceneMoment, storyboardCounts } from '../utils/storyboard';
+
+// Frames drawn at the same time by "Draw the missing frames".
+const DRAW_AT_ONCE = 3;
+
+/**
+ * Step 3, optional: a picture of each scene, made with the image model before any video.
+ * A picture is quick to look at and remake, so the product's size and the look of each scene are
+ * settled here. A scene with an accepted picture starts its video on it; a scene without one
+ * starts the way it is set on the Generate step.
+ */
+export default function StoryboardPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { project, loading: projectLoading } = useProject(id);
+  const { scenes, loading: scenesLoading } = useScenes(id);
+  const [drawing, setDrawing] = useState([]);    // ids of scenes being drawn by "Draw the missing frames"
+  const [pageError, setPageError] = useState('');
+
+  const labels = sceneLabels(scenes);
+  const inVideo = scenes.filter((scene) => !isSceneSkipped(scene));
+  const counts = storyboardCounts(inVideo);
+  const missing = inVideo.filter((scene) => framesInOrder(scene).length === 0 && sceneMoment(scene));
+  const look = hasLookFrame(scenes);
+  const drawingAll = drawing.length > 0;
+
+  const drawMissing = async () => {
+    setPageError('');
+    setDrawing(missing.map((scene) => scene.id));
+    const failures = await runInPool(missing, DRAW_AT_ONCE, async (scene) => {
+      try {
+        await addStoryboardFrame(id, scene.id);
+      } finally {
+        setDrawing((ids) => ids.filter((sceneId) => sceneId !== scene.id));
+      }
+    });
+    setDrawing([]);
+    if (failures.length) {
+      const first = failures[0].error?.message || 'Try again.';
+      setPageError(
+        failures.length === 1
+          ? `One frame could not be drawn. ${first}`
+          : `${failures.length} frames could not be drawn. ${first}`,
+      );
+    }
+  };
+
+  let summary = 'No frames yet. Scenes without a frame start the way they are set on the Generate step.';
+  if (counts.withFrame > 0) {
+    summary = `${counts.accepted} of ${counts.total} ${counts.total === 1 ? 'scene starts' : 'scenes start'} on a picture you accepted.`;
+  }
+
+  return (
+    <Layout>
+      <div className="container page-wrap">
+        <Stepper
+          currentStep={STEP.STORYBOARD}
+          maxReachableStep={maxReachableStep(project, scenes)}
+          onStepClick={(step) => navigate(stepPath(id, step))}
+        />
+
+        <header className="page-head">
+          <div className="page-head-text">
+            <h1 className="page-title">Storyboard</h1>
+            <p className="page-subtitle">
+              Optional. See a picture of each scene before any video is made, and fix it until the product looks
+              right. Each scene&apos;s video then starts on the picture you accepted.
+            </p>
+          </div>
+        </header>
+
+        {pageError && <p className="page-alert" role="alert">{pageError}</p>}
+
+        {scenesLoading || projectLoading ? (
+          <div className="page-loading">
+            <LoadingSpinner size="lg" label="Loading scenes…" />
+          </div>
+        ) : scenes.length === 0 ? (
+          <div className="card card-white empty-state">
+            <h2 className="empty-state-title">No scenes yet</h2>
+            <p className="empty-state-text">Write your script first. Each scene of the script gets a picture here.</p>
+            <div className="empty-state-actions">
+              <button type="button" className="btn btn-primary" onClick={() => navigate(stepPath(id, STEP.SCRIPT))}>
+                Go to Script
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <section className="card card-white board-overview" aria-label="Storyboard progress">
+              <div className="board-overview-text">
+                <p className="board-overview-summary" aria-live="polite">{summary}</p>
+                {!look && (
+                  <p className="board-overview-tip">
+                    Start with one scene: draw its frame and accept it. The other frames are then drawn to match it,
+                    so the product, the setting and the light stay the same.
+                  </p>
+                )}
+              </div>
+              {missing.length > 0 && (
+                <button type="button" className="btn btn-secondary" onClick={drawMissing} disabled={drawingAll}>
+                  {drawingAll
+                    ? `Drawing ${drawing.length} ${drawing.length === 1 ? 'frame' : 'frames'}…`
+                    : look
+                      ? `Draw the ${missing.length} missing ${missing.length === 1 ? 'frame' : 'frames'} to match`
+                      : `Draw the ${missing.length} missing ${missing.length === 1 ? 'frame' : 'frames'}`}
+                </button>
+              )}
+            </section>
+
+            <div className="board-list">
+              {scenes.map((scene, idx) => (
+                <StoryboardSceneCard
+                  key={scene.id}
+                  projectId={id}
+                  uid={user?.uid}
+                  scene={scene}
+                  label={labels[idx]}
+                  skipped={isSceneSkipped(scene)}
+                  drawing={drawing.includes(scene.id)}
+                />
+              ))}
+            </div>
+
+            <div className="page-actions">
+              <button type="button" className="btn btn-secondary btn-lg" onClick={() => navigate(stepPath(id, STEP.SCRIPT))}>
+                ← Script
+              </button>
+              <div className="page-actions-end">
+                <button type="button" className="btn btn-primary btn-lg" onClick={() => navigate(stepPath(id, STEP.GENERATE))}>
+                  {counts.withFrame === 0 ? 'Skip to Generate' : 'Generate videos'}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </Layout>
+  );
+}

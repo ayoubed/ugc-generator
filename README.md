@@ -79,6 +79,17 @@ names, no face in a product-led script...) and saves every output to `backend/ev
 wordings can be read side by side. The checks only catch mistakes a rule can catch; read the
 outputs too. A new failure worth remembering becomes a new case file. Real runs call the model.
 
+## Storyboard (optional step)
+
+Between Script and Generate, each scene can get a picture made with the image model before any
+video is made. A still is quick to look at and remake, so the product's size and the look of the
+scene are settled there. The picture is checked automatically (size, product likeness, hands) and
+drawn once more when the check finds a problem. Accepting a frame makes it the scene's starting
+picture (`customStartImageRef`, `imageSource: "uploaded"`), so Generate needs no other change; the
+first accepted frame of a video is also sent along when the other frames are drawn, so they match.
+Code: `backend/app/storyboard.py`, `backend/app/routes/storyboard.py`, the `storyboard.*` prompt
+files, `frontend/src/pages/StoryboardPage.jsx`.
+
 ## One voice and exact captions (ElevenLabs, optional)
 
 Set `ELEVENLABS_API_KEY` on the backend (in `backend/.env` locally, as an environment variable on

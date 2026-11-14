@@ -91,6 +91,7 @@ from app.routes.reference import router as reference_router
 from app.routes.voices import router as voices_router
 from app.routes.package import router as package_router
 from app.routes.sounds import router as sounds_router
+from app.routes.storyboard import router as storyboard_router
 
 app.include_router(health_router, prefix="/api", tags=["Health"])
 app.include_router(scenes_router, prefix="/api", tags=["Scenes"])
@@ -103,6 +104,7 @@ app.include_router(reference_router, prefix="/api", tags=["Reference"])
 app.include_router(voices_router, prefix="/api", tags=["Voices"])
 app.include_router(package_router, prefix="/api", tags=["Package"])
 app.include_router(sounds_router, prefix="/api", tags=["Sounds"])
+app.include_router(storyboard_router, prefix="/api", tags=["Storyboard"])
 if os.environ.get("MOCK_AUTH", "").lower() in ("1", "true"):
     # Local development only: lets the frontend sign in as the test account (see routes/dev.py).
     from app.routes.dev import router as dev_router

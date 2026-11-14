@@ -57,6 +57,11 @@ class TakeIssue(BaseModel):
     detail: str = Field(description="One short sentence a non-technical person understands, saying what is wrong and where.")
 
 
+class FrameCheckResult(BaseModel):
+    """Structured output of the storyboard frame check."""
+    issues: List[TakeIssue] = Field(default_factory=list, description="Clear, visible problems only. Empty when the frame is fine.")
+
+
 class TakeCheckResult(BaseModel):
     spoken_text: str = Field(default="", description="Exactly what is said in the video, word for word. Empty if nobody speaks.")
     issues: List[TakeIssue] = Field(default_factory=list, description="Clear, visible or audible problems only. Empty when the take is fine.")

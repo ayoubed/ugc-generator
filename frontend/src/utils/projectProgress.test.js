@@ -156,9 +156,11 @@ describe('final videos', () => {
 describe('journey', () => {
   it('opens later steps as the project gets there', () => {
     expect(maxReachableStep({ status: 'draft' }, [])).toBe(1);
-    expect(maxReachableStep({ status: 'scripted' }, [{ id: '0' }])).toBe(4);
-    expect(maxReachableStep({ finalVideos: [{ version: 1, storageRef: 'f' }] }, [{ id: '0' }])).toBe(4);
-    expect(stepPath('p1', 4)).toBe('/project/p1/video');
+    expect(maxReachableStep({ status: 'scripted' }, [{ id: '0' }])).toBe(5);
+    expect(maxReachableStep({ finalVideos: [{ version: 1, storageRef: 'f' }] }, [{ id: '0' }])).toBe(5);
+    expect(stepPath('p1', 5)).toBe('/project/p1/video');
+    expect(stepPath('p1', 3)).toBe('/project/p1/storyboard');
+    expect(stepPath('p1', 4)).toBe('/project/p1/generate');
   });
 
   it('is ready to stitch only when every scene in the video has a finished take', () => {

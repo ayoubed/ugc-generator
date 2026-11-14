@@ -33,6 +33,7 @@ import {
   isSceneSkipped,
   isStitchStuck,
   isStitching,
+  STEP,
   maxReachableStep,
   previousIncludedScene,
   sceneChangesSinceTake,
@@ -351,7 +352,7 @@ function GenerateVideos({ projectId: id }) {
   };
 
   // Captions, cuts and music are chosen on the Video step, which also starts the stitch.
-  const handleStitch = () => goTo(stepPath(id, 4));
+  const handleStitch = () => goTo(stepPath(id, STEP.VIDEO));
 
   const jumpToScene = (sceneId) => {
     const card = document.getElementById(`scene-${sceneId}`);
@@ -449,7 +450,7 @@ function GenerateVideos({ projectId: id }) {
   let stitchNote = '';
   let stitchTone = '';
   let primaryAction = null;
-  const openExport = () => goTo(stepPath(id, 4));
+  const openExport = () => goTo(stepPath(id, STEP.VIDEO));
 
   if (stitching) {
     stitchNote = `Stitching your final video · ${formatElapsed(stitchElapsed)}`;
@@ -534,7 +535,7 @@ function GenerateVideos({ projectId: id }) {
     <Layout>
       <div className="container page-wrap">
         <Stepper
-          currentStep={3}
+          currentStep={STEP.GENERATE}
           maxReachableStep={maxReachableStep(project, scenes)}
           onStepClick={(step) => goTo(stepPath(id, step))}
         />

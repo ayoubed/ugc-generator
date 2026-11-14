@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage';
 import CreatePage from './pages/CreatePage';
 import EditScenesPage from './pages/EditScenesPage';
 import GeneratePage from './pages/GeneratePage';
+import StoryboardPage from './pages/StoryboardPage';
 import VideoPage from './pages/VideoPage';
 
 /**
@@ -159,6 +160,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <EditScenesPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/project/:id/storyboard"
+        element={
+          <ProtectedRoute>
+            <StoryboardPage />
           </ProtectedRoute>
         }
       />

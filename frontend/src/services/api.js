@@ -377,3 +377,34 @@ export function makeSound(projectId, { prompt, seconds = null }) {
 export function previewVoice(projectId) {
   return callApi(`/api/projects/${projectId}/voice/preview`, { fallback: 'Could not prepare the voice' });
 }
+
+/**
+ * Storyboard: frames of a scene made before any video. Every call returns { storyboard } as saved;
+ * the scene document updates too, so pages that watch scenes need not use the answer.
+ */
+const framesPath = (projectId, sceneId) => `/api/projects/${projectId}/scenes/${sceneId}/storyboard/frames`;
+
+/** Draw a new frame (description left out: the scene's own text), or add an uploaded picture as one. */
+export function addStoryboardFrame(projectId, sceneId, { description = '', storageRef = '' } = {}) {
+  const body = {};
+  if (description.trim()) body.description = description.trim();
+  if (storageRef) body.storage_ref = storageRef;
+  return callApi(framesPath(projectId, sceneId), { body, fallback: 'Could not make the frame' });
+}
+
+/** A new picture for a frame. With `instruction` the picture it has is changed as asked. */
+export function remakeStoryboardFrame(projectId, sceneId, frameId, { description = '', instruction = '' } = {}) {
+  const body = {};
+  if (description.trim()) body.description = description.trim();
+  if (instruction.trim()) body.instruction = instruction.trim();
+  return callApi(`${framesPath(projectId, sceneId)}/${frameId}/remake`, { body, fallback: 'Could not remake the frame' });
+}
+
+/** Accept a frame (it becomes the picture the scene starts on), take that back, or set it as the look. */
+export function editStoryboardFrame(projectId, sceneId, frameId, changes) {
+  return callApi(`${framesPath(projectId, sceneId)}/${frameId}`, { method: 'PATCH', body: changes, fallback: 'Could not save the frame' });
+}
+
+export function removeStoryboardFrame(projectId, sceneId, frameId) {
+  return callApi(`${framesPath(projectId, sceneId)}/${frameId}`, { method: 'DELETE', fallback: 'Could not remove the frame' });
+}

@@ -13,7 +13,7 @@ import cv2
 from google import genai
 from google.genai import types
 import difflib
-from app.models import Scene, SceneList, AssetBible, TakeCheckResult, ReferenceBreakdown
+from app.models import Scene, SceneList, AssetBible, TakeCheckResult, FrameCheckResult, ReferenceBreakdown
 from app.model_registry import get_video_model, get_music_model, TAKE_CHECK_MODEL_ID, STILL_MODEL_ID, REFERENCE_MODEL_ID
 from app import prompts
 from app.captions import build_ass, fit_words_to_clip, word_timings
@@ -887,6 +887,11 @@ def generate_cut_still(
 
     contents: List[Any] = [image_part(frame_path)] + [image_part(r["path"]) for r in references]
     contents.append("\n".join(lines))
+    return _draw_still(contents, output_path, aspect_ratio, "the camera cut")
+
+
+def _draw_still(contents: List[Any], output_path: str, aspect_ratio: str, what: str) -> str:
+    """One picture from the image model, saved to output_path. `what` names it in the error."""
     client = get_client()  # kept in a variable: a dropped client closes its connection mid-request
     response = client.models.generate_content(
         model=STILL_MODEL_ID,
@@ -905,7 +910,121 @@ def generate_cut_still(
             with open(output_path, "wb") as f:
                 f.write(inline.data)
             return output_path
-    raise RuntimeError("The image model returned no picture for the camera cut.")
+    raise RuntimeError(f"The image model returned no picture for {what}.")
+
+
+def _picture_lines(pictures: List[Dict[str, Any]], first_number: int = 1) -> str:
+    lines = [
+        f"- Picture {first_number + i}: {(p.get('description') or '').strip() or 'Additional visual reference.'}"
+        for i, p in enumerate(pictures)
+    ]
+    return "\n".join(lines) or "(none)"
+
+
+def _detail_lines(asset_lines: Optional[List[str]]) -> str:
+    return "\n".join(f"- {line}" for line in (asset_lines or [])) or "(none given)"
+
+
+def build_storyboard_frame_prompt(
+    moment: str,
+    pictures: List[Dict[str, Any]],
+    asset_lines: Optional[List[str]] = None,
+    product_led: bool = False,
+    feedback: Optional[List[str]] = None,
+) -> str:
+    """The prompt for a new storyboard frame. `pictures` are the attached pictures, in order."""
+    problems = [f for f in (feedback or []) if f]
+    return prompts.render(
+        "storyboard.frame",
+        moment=" ".join((moment or "").split()) or "the opening moment of the scene.",
+        kind_rule=prompts.text("storyboard.frame.product_led" if product_led else "storyboard.frame.creator"),
+        details=_detail_lines(asset_lines),
+        pictures=_picture_lines(pictures),
+        feedback=("\nThe last try had these problems. Avoid them:\n" + "\n".join(f"- {p}" for p in problems)) if problems else "",
+    ).rstrip()
+
+
+def build_storyboard_edit_prompt(
+    instruction: str, pictures: List[Dict[str, Any]], asset_lines: Optional[List[str]] = None
+) -> str:
+    """The prompt for changing a frame. `pictures` are the pictures attached after the frame itself."""
+    return prompts.render(
+        "storyboard.edit",
+        instruction=" ".join((instruction or "").split()),
+        details=_detail_lines(asset_lines),
+        pictures=_picture_lines(pictures, first_number=2),
+    )
+
+
+def generate_storyboard_frame(
+    output_path: str,
+    moment: str,
+    aspect_ratio: str = "9:16",
+    reference_images: Optional[List[Dict[str, Any]]] = None,
+    asset_lines: Optional[List[str]] = None,
+    product_led: bool = False,
+    base_image_path: Optional[str] = None,
+    instruction: Optional[str] = None,
+    feedback: Optional[List[str]] = None,
+) -> str:
+    """
+    Draws one storyboard frame with the image model: the picture a scene's video will start on.
+    A still is cheap to look at and remake, so the product's size and look are settled here,
+    before any video is paid for.
+
+    reference_images: [{"path", "description"}]: product pictures, the creator photo, frames the
+    user already accepted (so the look stays the same across scenes).
+    base_image_path + instruction: change that frame as asked instead of drawing a new one.
+    feedback: what the automatic check found wrong with the last try.
+    """
+    references = [r for r in (reference_images or []) if r.get("path") and os.path.exists(r["path"])]
+    editing = bool(base_image_path and (instruction or "").strip() and os.path.exists(base_image_path))
+    if editing:
+        prompt = build_storyboard_edit_prompt(instruction or "", references, asset_lines)
+        contents: List[Any] = [_image_part(base_image_path)]
+    else:
+        prompt = build_storyboard_frame_prompt(moment, references, asset_lines, product_led, feedback)
+        contents = []
+    contents += [_image_part(r["path"]) for r in references]
+    contents.append(prompt)
+    return _draw_still(contents, output_path, aspect_ratio, "this frame")
+
+
+def check_storyboard_frame(
+    image_path: str,
+    moment: str,
+    product_paths: Optional[List[str]] = None,
+    asset_lines: Optional[List[str]] = None,
+    product_led: bool = False,
+) -> List[Dict[str, str]]:
+    """
+    Looks at a storyboard frame and lists clear problems ([{"kind", "detail"}], empty when fine):
+    a product at the wrong size, a product that differs from its pictures, deformed hands, a face
+    in a product-led video. Raises on API errors.
+    """
+    products = [p for p in (product_paths or []) if p and os.path.exists(p)]
+    prompt = prompts.render(
+        "storyboard.check",
+        moment=" ".join((moment or "").split()) or "(not given)",
+        details=_detail_lines(asset_lines),
+        face_rule=prompts.text("storyboard.check.no_face") if product_led else "",
+    )
+    client = get_client()
+    response = client.models.generate_content(
+        model=TAKE_CHECK_MODEL_ID,
+        contents=[_image_part(image_path)] + [_image_part(p) for p in products] + [prompt],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=FrameCheckResult,
+            temperature=0.1,
+        ),
+    )
+    data = _parse_json_response(response.text)
+    return [
+        {"kind": str(i.get("kind") or "other"), "detail": str(i.get("detail") or "").strip()}
+        for i in ((data or {}).get("issues") or [])
+        if isinstance(i, dict) and str(i.get("detail") or "").strip()
+    ][:6]
 
 
 def extract_last_frame(video_path: str, output_image_path: str) -> str:
