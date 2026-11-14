@@ -118,6 +118,26 @@ describe('Storyboard step', () => {
     expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1', { accepted: true });
   });
 
+  it('warns that drawn pictures are not used until accepted, and accepts them all at once', async () => {
+    open([
+      withFrame('0'),
+      withFrame('1', { accepted: true }, { customStartImageRef: 'f1.png' }),
+      withFrame('2'),
+      scene('3'),
+    ]);
+    expect(screen.getByText(/2 pictures are not used yet/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Use all 2' }));
+    await waitFor(() => expect(editStoryboardFrame).toHaveBeenCalledTimes(2));
+    expect(editStoryboardFrame.mock.calls.map((call) => call[1])).toEqual(['0', '2']);
+    expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1', { accepted: true });
+  });
+
+  it('has nothing to warn about when every drawn picture is in use', () => {
+    open([withFrame('0', { accepted: true }, { customStartImageRef: 'f1.png' }), scene('1')]);
+    expect(screen.queryByText(/not used yet/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Use (it|all)/ })).toBeNull();
+  });
+
   it('marks the accepted frame as the start and lets it be taken back or set as the look', async () => {
     const card = open([withFrame('0', { accepted: true, look: true }, { customStartImageRef: 'f1.png' })]);
     expect(card(1).getByText('The video starts on this picture')).toBeTruthy();

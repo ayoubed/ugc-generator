@@ -7,9 +7,9 @@ import StoryboardSceneCard from '../components/StoryboardSceneCard';
 import { updateProjectSettings, useProject, useScenes } from '../hooks/useProject';
 import { useModels } from '../hooks/useModels';
 import { useAuth } from '../hooks/useAuth';
-import { addStoryboardFrame } from '../services/api';
+import { addStoryboardFrame, editStoryboardFrame } from '../services/api';
 import { STEP, isSceneSkipped, maxReachableStep, sceneLabels, stepPath } from '../utils/projectProgress';
-import { framesInOrder, hasLookFrame, runInPool, sceneMoment, storyboardCounts } from '../utils/storyboard';
+import { framesInOrder, hasLookFrame, runInPool, sceneMoment, storyboardCounts, unusedFrame } from '../utils/storyboard';
 
 // Frames drawn at the same time by "Draw the missing frames".
 const DRAW_AT_ONCE = 3;
@@ -51,6 +51,24 @@ export default function StoryboardPage() {
   const missing = inVideo.filter((scene) => framesInOrder(scene).length === 0 && sceneMoment(scene));
   const look = hasLookFrame(scenes);
   const drawingAll = drawing.length > 0;
+  // Drawn but not accepted: the video does not start on these yet.
+  const unused = inVideo.filter((scene) => unusedFrame(scene));
+  const [accepting, setAccepting] = useState(false);
+
+  const useAll = async () => {
+    setPageError('');
+    setAccepting(true);
+    try {
+      // One after another, so the first one accepted sets the look of the video.
+      for (const scene of unused) {
+        await editStoryboardFrame(id, scene.id, unusedFrame(scene).id, { accepted: true });
+      }
+    } catch (err) {
+      setPageError(err?.message || 'Could not use the pictures. Try again.');
+    } finally {
+      setAccepting(false);
+    }
+  };
 
   const drawMissing = async () => {
     setPageError('');
@@ -171,6 +189,18 @@ export default function StoryboardPage() {
                 ← Script
               </button>
               <div className="page-actions-end">
+                {unused.length > 0 && (
+                  <>
+                    <span className="page-actions-note">
+                      {unused.length === 1
+                        ? '1 picture is not used yet: its scene will not start on it.'
+                        : `${unused.length} pictures are not used yet: their scenes will not start on them.`}
+                    </span>
+                    <button type="button" className="btn btn-secondary btn-lg" onClick={useAll} disabled={accepting || drawingAll}>
+                      {accepting ? 'Saving…' : unused.length === 1 ? 'Use it' : `Use all ${unused.length}`}
+                    </button>
+                  </>
+                )}
                 <button type="button" className="btn btn-primary btn-lg" onClick={() => navigate(stepPath(id, STEP.GENERATE))}>
                   {counts.withFrame === 0 ? 'Skip to Generate' : 'Generate videos'}
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { framesInOrder, hasLookFrame, runInPool, sceneMoment, startFrame, startsOnStoryboard, storyboardCounts } from './storyboard';
+import { framesInOrder, hasLookFrame, runInPool, sceneMoment, startFrame, startsOnStoryboard, storyboardCounts, unusedFrame } from './storyboard';
 
 const frame = (id, extra = {}) => ({ id, order: 0, imageRef: `f/${id}.png`, accepted: false, look: false, ...extra });
 const withFrames = (...frames) => ({ storyboard: { frames: Object.fromEntries(frames.map((f) => [f.id, f])) } });
@@ -23,6 +23,13 @@ describe('storyboard frames', () => {
     expect(startsOnStoryboard({ ...scene, customStartImageRef: 'f/a.png' })).toBe(true);
     expect(startsOnStoryboard({ ...scene, customStartImageRef: 'other.png' })).toBe(false);
     expect(startsOnStoryboard({})).toBe(false);
+  });
+
+  it('finds a drawn frame that is not accepted yet', () => {
+    expect(unusedFrame(withFrames(frame('a'))).id).toBe('a');
+    expect(unusedFrame(withFrames(frame('a', { accepted: true })))).toBeNull();
+    expect(unusedFrame(withFrames(frame('a', { imageRef: '' })))).toBeNull();
+    expect(unusedFrame({})).toBeNull();
   });
 
   it('describes a frame by the scene itself', () => {

@@ -29,6 +29,15 @@ export function startsOnStoryboard(scene) {
   return Boolean(frame) && scene?.customStartImageRef === frame.imageRef;
 }
 
+/**
+ * A frame that has a picture but is not accepted, so the scene's video does not start on it yet
+ * (or null). Drawing a frame is not enough: the user accepts the one they want used.
+ */
+export function unusedFrame(scene) {
+  if (startFrame(scene)) return null;
+  return framesInOrder(scene).find((frame) => frame.imageRef) || null;
+}
+
 /** Whether any scene has an accepted frame marked as the look of the video. */
 export function hasLookFrame(scenes) {
   return (scenes || []).some((scene) => framesInOrder(scene).some((frame) => frame.look && frame.accepted));

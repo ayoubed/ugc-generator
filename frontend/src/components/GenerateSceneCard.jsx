@@ -6,6 +6,8 @@ import StartPicturePicker from './StartPicturePicker';
 import EndPicturePicker from './EndPicturePicker';
 import { useStorageUrl } from '../hooks/useStorageUrl';
 import { startBlocker } from '../utils/startBlocker';
+import { startsOnStoryboard, unusedFrame } from '../utils/storyboard';
+import { editStoryboardFrame } from '../services/api';
 import { takeContextPictureCount, usedCreatorPhoto } from '../utils/takePictures';
 import {
   isProductLed,
@@ -140,6 +142,20 @@ export default function GenerateSceneCard({
   const [toggling, setToggling] = useState(false);
   const [toggleError, setToggleError] = useState('');
   const [cancelling, setCancelling] = useState(false);
+  const [usingFrame, setUsingFrame] = useState(false);
+  const boardFrame = unusedFrame(scene);   // drawn on the Storyboard step, but not accepted
+
+  const useBoardFrame = async () => {
+    setSourceError('');
+    setUsingFrame(true);
+    try {
+      await editStoryboardFrame(project.id, scene.id, boardFrame.id, { accepted: true });
+    } catch (err) {
+      setSourceError(err?.message || 'Could not use the storyboard picture. Try again.');
+    } finally {
+      setUsingFrame(false);
+    }
+  };
 
   const status = sceneStatus(scene);
   const busy = isSceneBusy(scene);
@@ -404,6 +420,17 @@ export default function GenerateSceneCard({
               onBusyChange={setPickerBusy}
               disabled={fresh}
             />
+            {startsOnStoryboard(scene) && source === 'uploaded' && (
+              <p className="gen-note">The custom picture is this scene&apos;s storyboard picture.</p>
+            )}
+            {boardFrame && (
+              <p className="gen-note is-warning">
+                This scene has a storyboard picture that is not used yet.{' '}
+                <button type="button" className="link-button" onClick={useBoardFrame} disabled={usingFrame || fresh}>
+                  {usingFrame ? 'Saving…' : 'Start on the storyboard picture'}
+                </button>
+              </p>
+            )}
             {sourceError && <p className="gen-note is-error" role="alert">{sourceError}</p>}
           </section>
 
