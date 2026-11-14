@@ -216,14 +216,14 @@ PROJECT = {"userId": "u1", "settings": {"videoType": "product", "aspectRatio": "
 SCENE = {"description": "A wrist turns to show the watch.", "imageSource": "creator"}
 
 
-def test_a_good_frame_is_drawn_once_and_saved_unaccepted(studio):
+def test_a_good_frame_is_drawn_once_and_used_by_default(studio):
     made = storyboard.draw_frame("u1", "p1", "0", {"id": "f1", "version": 0}, PROJECT, SCENE, [])
     assert len(studio.draws) == 1 and studio.draws[0]["product_led"] is True
     assert studio.draws[0]["moment"] == "A wrist turns to show the watch."
     assert studio.draws[0]["asset_lines"] == ["Products and props: Steel watch"]
     assert len(studio.checks[0]["products"]) == 1
     assert made["imageRef"] == f"{BASE}scenes/0/storyboard/f1_v1.png" and studio.uploads[0][0] == made["imageRef"]
-    assert made["accepted"] is False and made["issues"] == [] and made["checked"] is True and made["version"] == 1
+    assert made["accepted"] is True and made["issues"] == [] and made["checked"] is True and made["version"] == 1
     assert studio.draws[0]["image_model"] is None and made["imageModel"] == "gemini-3-pro-image"
 
 
@@ -259,7 +259,22 @@ def test_an_instruction_changes_the_picture_the_frame_has(studio):
     made = storyboard.draw_frame("u1", "p1", "0", current, PROJECT, SCENE, [], instruction="  watch   smaller ")
     assert studio.draws[0]["instruction"] == "watch smaller" and studio.draws[0]["base_image_path"]
     assert made["version"] == 3 and made["imageRef"].endswith("f1_v3.png")
-    assert made["accepted"] is False and made["look"] is False          # a new picture is accepted again by the user
+    assert made["accepted"] is True and made["look"] is True            # it stays in use, as it was
+
+
+def test_a_frame_the_user_switched_off_stays_off_when_drawn_again(studio):
+    made = storyboard.draw_frame("u1", "p1", "0", {"id": "f1", "version": 1, "accepted": False}, PROJECT, SCENE, [])
+    assert made["accepted"] is False
+
+
+def test_the_first_picture_in_use_sets_the_look_and_later_ones_do_not():
+    used, off = frame("a", accepted=True), frame("b", accepted=False, look=True)
+    assert storyboard.with_default_look(used, [])["look"] is True
+    assert storyboard.with_default_look(off, [])["look"] is False                # not in use: never the look
+    other = [("1", {"storyboard": {"frames": {"z": frame("z", accepted=True, look=True)}}})]
+    assert storyboard.with_default_look(used, other)["look"] is False
+    own = [("0", {"storyboard": {"frames": {"a": frame("a", accepted=True, look=True)}}})]
+    assert storyboard.with_default_look(used, own)["look"] is True               # itself does not count as "another"
 
 
 # --- the API ---------------------------------------------------------------------------------------
@@ -280,25 +295,28 @@ def add(board, n=0, **body):
     return list(response.json()["storyboard"]["frames"].values())[-1]
 
 
-def test_adding_a_frame_draws_it_and_leaves_the_scene_start_alone(board):
+def test_a_drawn_frame_is_the_scene_start_right_away_and_sets_the_look(board):
     made = add(board)
     assert made["description"] == SCENE["description"] and made["order"] == 0
-    assert board.scene()["storyboard"]["frames"][made["id"]]["imageRef"] == made["imageRef"]
-    assert board.scene()["imageSource"] == "creator" and "customStartImageRef" not in board.scene()
+    assert made["accepted"] is True and made["look"] is True
+    scene = board.scene()
+    assert scene["customStartImageRef"] == made["imageRef"] and scene["imageSource"] == "uploaded"
+
+    second = add(board, n=1)                               # drawn to match the first, and not the look itself
+    assert [p["kind"] for p in board.studio.draws[-1]["reference_images"]] == ["product", "look"]
+    assert second["accepted"] is True and second["look"] is False
+    assert board.scene(1)["customStartImageRef"] == second["imageRef"]
 
 
-def test_accepting_the_frame_makes_it_the_scene_start_and_the_look_of_the_video(board):
+def test_switching_a_frame_off_and_on_again_moves_the_scene_start_with_it(board):
     made = add(board)
-    response = board.patch(f"/api/projects/p1/scenes/0/storyboard/frames/{made['id']}", json={"accepted": True})
-    assert response.status_code == 200
+    url = f"/api/projects/p1/scenes/0/storyboard/frames/{made['id']}"
+    assert board.patch(url, json={"accepted": False}).status_code == 200
+    assert board.scene()["imageSource"] == "creator" and board.scene()["customStartImageRef"] is None
+    assert board.patch(url, json={"accepted": True}).status_code == 200
     scene = board.scene()
     assert scene["customStartImageRef"] == made["imageRef"] and scene["imageSource"] == "uploaded"
     assert scene["storyboard"]["frames"][made["id"]]["look"] is True
-
-    second = add(board, n=1)                               # drawn to match the accepted frame
-    assert [p["kind"] for p in board.studio.draws[-1]["reference_images"]] == ["product", "look"]
-    board.patch(f"/api/projects/p1/scenes/1/storyboard/frames/{second['id']}", json={"accepted": True})
-    assert board.scene(1)["storyboard"]["frames"][second["id"]]["look"] is False   # the video already has its look
 
 
 def test_taking_the_acceptance_back_restores_how_the_scene_started(board):
@@ -311,16 +329,20 @@ def test_taking_the_acceptance_back_restores_how_the_scene_started(board):
     assert scene["storyboard"]["frames"][made["id"]]["look"] is False
 
 
-def test_remaking_an_accepted_frame_needs_a_new_acceptance(board):
+def test_a_remade_frame_stays_in_use_with_its_new_picture(board):
     made = add(board)
     url = f"/api/projects/p1/scenes/0/storyboard/frames/{made['id']}"
     board.patch(url, json={"accepted": True})
     response = board.post(url + "/remake", json={"instruction": "smaller watch", "description": "On the left wrist."})
     assert response.status_code == 200
     remade = response.json()["storyboard"]["frames"][made["id"]]
-    assert remade["version"] == 2 and remade["accepted"] is False and remade["description"] == "On the left wrist."
+    assert remade["version"] == 2 and remade["accepted"] is True and remade["description"] == "On the left wrist."
     assert board.studio.draws[-1]["instruction"] == "smaller watch"
-    assert board.scene()["imageSource"] == "creator"
+    assert board.scene()["customStartImageRef"] == remade["imageRef"] != made["imageRef"]
+
+    board.patch(url, json={"accepted": False})
+    again = board.post(url + "/remake", json={}).json()["storyboard"]["frames"][made["id"]]
+    assert again["accepted"] is False and board.scene()["imageSource"] == "creator"     # switched off stays off
 
 
 def test_removing_the_start_frame_restores_the_scene_and_a_missing_frame_is_a_404(board):
@@ -368,9 +390,10 @@ def test_a_failed_drawing_is_said_in_plain_words_and_saves_nothing(board, monkey
     assert "storyboard" not in board.scene()
 
 
-def test_looking_only_at_a_frame_is_marked_and_needs_acceptance(board):
+def test_only_a_frame_in_use_can_be_the_look(board):
     made = add(board)
     url = f"/api/projects/p1/scenes/0/storyboard/frames/{made['id']}"
+    board.patch(url, json={"accepted": False})
     assert board.patch(url, json={"look": True}).status_code == 400
     board.patch(url, json={"accepted": True, "look": False})
     assert board.scene()["storyboard"]["frames"][made["id"]]["look"] is False

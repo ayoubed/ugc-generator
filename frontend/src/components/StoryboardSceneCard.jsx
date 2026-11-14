@@ -18,7 +18,7 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024;
 /**
  * One scene on the Storyboard step: its frame (the picture the video will start on), and what can
  * be done with it: draw it, change it with a short instruction, draw it again, upload one instead,
- * accept it, remove it.
+ * remove it. A picture is used by default; the checkbox switches that off.
  *
  * drawing: true while the page is drawing this scene's frame as part of "draw the missing frames".
  */
@@ -126,6 +126,18 @@ export default function StoryboardSceneCard({ projectId, uid, scene, label, draw
           onChange={(event) => setDraft(event.target.value)}
         />
 
+        {frame && (
+          <label className="board-use">
+            <input
+              type="checkbox"
+              checked={Boolean(frame.accepted)}
+              disabled={working || !frame.imageRef}
+              onChange={(event) => accept(event.target.checked)}
+            />
+            Start this scene&apos;s video on this picture
+          </label>
+        )}
+
         {issues.length > 0 && (
           <div className="gen-note is-warning" role="status">
             The automatic check noticed:
@@ -145,16 +157,6 @@ export default function StoryboardSceneCard({ projectId, uid, scene, label, draw
           {!frame && (
             <button type="button" className="btn btn-primary" onClick={draw} disabled={working || !description.trim()}>
               Draw this frame
-            </button>
-          )}
-          {frame && !frame.accepted && (
-            <button type="button" className="btn btn-primary" onClick={() => accept(true)} disabled={working || !frame.imageRef}>
-              Use this picture
-            </button>
-          )}
-          {frame && frame.accepted && (
-            <button type="button" className="btn btn-secondary" onClick={() => accept(false)} disabled={working}>
-              Stop using it
             </button>
           )}
           {frame && (

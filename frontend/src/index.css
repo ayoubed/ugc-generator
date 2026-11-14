@@ -3593,6 +3593,12 @@ button.tl-block { cursor: pointer; }
   color: var(--text-secondary);
 }
 
+.board-use {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
 .board-model {
   display: flex;
   flex: 0 1 260px;
@@ -3721,6 +3727,7 @@ button.tl-block { cursor: pointer; }
   flex: 1 1 240px;
 }
 
+.board-use,
 .board-look {
   display: flex;
   align-items: center;

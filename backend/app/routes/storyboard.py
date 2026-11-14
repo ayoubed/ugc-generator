@@ -114,7 +114,8 @@ async def add_frame_endpoint(
             detail=f"A scene can have {storyboard.MAX_FRAMES_PER_SCENE} frames at most. Remove one to add another.",
         )
     description = " ".join((request.description or "").split()) or storyboard.default_moment(scene_data)
-    frame = {"id": storyboard.new_frame_id(), "description": description, "accepted": False, "look": False, "version": 0}
+    # A new picture is used by default; the user switches off the ones they don't want.
+    frame = {"id": storyboard.new_frame_id(), "description": description, "accepted": True, "look": False, "version": 0}
 
     if request.storage_ref:
         if not request.storage_ref.startswith(f"users/{uid}/projects/{pid}/"):
@@ -132,6 +133,7 @@ async def add_frame_endpoint(
         if not description:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Describe what this frame shows first.")
         frame = await _draw(uid, pid, n, frame, project_data, scene_data, _all_scenes(project_ref))
+    frame = storyboard.with_default_look(frame, _all_scenes(project_ref))
     return _save(scene_ref, _merge(scene_ref, frame, add=True))
 
 
@@ -141,7 +143,7 @@ async def remake_frame_endpoint(
 ):
     """
     A new picture for a frame: drawn again from its description, or, with an instruction, the
-    picture it has changed as asked. The new picture is not accepted until the user accepts it.
+    picture it has changed as asked. The frame stays in use (or switched off) as it was.
     """
     uid = current_user["uid"]
     project_ref, scene_ref, project_data, scene_data = _load(pid, n, uid)
@@ -150,6 +152,7 @@ async def remake_frame_endpoint(
     if description:
         frame["description"] = description
     frame = await _draw(uid, pid, n, frame, project_data, scene_data, _all_scenes(project_ref), request.instruction)
+    frame = storyboard.with_default_look(frame, _all_scenes(project_ref))
     return _save(scene_ref, _merge(scene_ref, frame))
 
 
@@ -174,9 +177,8 @@ async def edit_frame_endpoint(
         frame["accepted"] = request.accepted
         if not request.accepted:
             frame["look"] = False
-        elif request.look is None and not storyboard.has_look_frame(_all_scenes(project_ref)):
-            # The first frame accepted in a video sets its look: later frames are drawn to match it.
-            frame["look"] = True
+        elif request.look is None:
+            frame = storyboard.with_default_look(frame, _all_scenes(project_ref))
     if request.look is not None:
         if request.look and not frame.get("accepted"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Accept this frame first.")

@@ -125,8 +125,21 @@ def look_frames(scenes: List[tuple], skip_frame_id: Optional[str] = None) -> Lis
     return found[:MAX_LOOK_FRAMES]
 
 
-def has_look_frame(scenes: List[tuple]) -> bool:
-    return bool(look_frames(scenes))
+def has_look_frame(scenes: List[tuple], skip_frame_id: Optional[str] = None) -> bool:
+    return bool(look_frames(scenes, skip_frame_id))
+
+
+def with_default_look(frame: Dict[str, Any], scenes: List[tuple]) -> Dict[str, Any]:
+    """
+    The frame, marked as the look of the video when it is in use and no other frame is: the first
+    picture used in a video sets its look, and later frames are drawn to match it. A frame that is
+    not in use never is the look.
+    """
+    if not frame.get("accepted"):
+        return {**frame, "look": False}
+    if frame.get("look") or has_look_frame(scenes, skip_frame_id=frame.get("id")):
+        return frame
+    return {**frame, "look": True}
 
 
 def frame_picture_specs(
@@ -179,8 +192,9 @@ def draw_frame(
 ) -> Dict[str, Any]:
     """
     Draws (or, with an instruction, changes) a frame's picture, checks it, and draws it once more
-    when the check finds a clear problem. Returns the frame with its new picture; it is not
-    accepted, the user decides that. Blocking: call it from a worker thread.
+    when the check finds a clear problem. Returns the frame with its new picture. A picture is
+    used by default (`accepted`): the user switches off the ones they don't want, and a frame
+    they switched off stays off when it is drawn again. Blocking: call it from a worker thread.
     """
     temp_dir = tempfile.mkdtemp(prefix=f"ugc_board_{project_id}_{scene_id}_")
     try:
@@ -245,8 +259,8 @@ def draw_frame(
             "imageRef": storage_path,
             "imageUrl": get_download_url(storage_path),
             "version": version,
-            "accepted": False,
-            "look": False,
+            "accepted": frame.get("accepted", True) is not False,
+            "look": bool(frame.get("look")),
             "issues": issues or [],
             "checked": issues is not None,
             "source": "ai",

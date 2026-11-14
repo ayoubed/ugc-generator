@@ -73,13 +73,23 @@ export default function StoryboardPage() {
   const drawMissing = async () => {
     setPageError('');
     setDrawing(missing.map((scene) => scene.id));
-    const failures = await runInPool(missing, DRAW_AT_ONCE, async (scene) => {
+    const drawOne = async (scene) => {
       try {
         await addStoryboardFrame(id, scene.id);
       } finally {
         setDrawing((ids) => ids.filter((sceneId) => sceneId !== scene.id));
       }
-    });
+    };
+    // With no look set yet, the first picture is drawn alone: it sets the look, and the rest are
+    // then drawn to match it. Drawn together, each would invent its own setting and light.
+    const [first, ...rest] = missing;
+    let failures = [];
+    if (look) {
+      failures = await runInPool(missing, DRAW_AT_ONCE, drawOne);
+    } else {
+      failures = await runInPool([first], 1, drawOne);
+      failures = failures.concat(await runInPool(rest, DRAW_AT_ONCE, drawOne));
+    }
     setDrawing([]);
     if (failures.length) {
       const first = failures[0].error?.message || 'Try again.';
@@ -93,7 +103,7 @@ export default function StoryboardPage() {
 
   let summary = 'No frames yet. Scenes without a frame start the way they are set on the Generate step.';
   if (counts.withFrame > 0) {
-    summary = `${counts.accepted} of ${counts.total} ${counts.total === 1 ? 'scene starts' : 'scenes start'} on a picture you accepted.`;
+    summary = `${counts.accepted} of ${counts.total} ${counts.total === 1 ? 'scene starts' : 'scenes start'} on a storyboard picture.`;
   }
 
   return (
@@ -110,7 +120,7 @@ export default function StoryboardPage() {
             <h1 className="page-title">Storyboard</h1>
             <p className="page-subtitle">
               Optional. See a picture of each scene before any video is made, and fix it until the product looks
-              right. Each scene&apos;s video then starts on the picture you accepted.
+              right. Each scene&apos;s video then starts on its picture, unless you switch that off.
             </p>
           </div>
         </header>
@@ -138,8 +148,8 @@ export default function StoryboardPage() {
                 <p className="board-overview-summary" aria-live="polite">{summary}</p>
                 {!look && (
                   <p className="board-overview-tip">
-                    Start with one scene: draw its frame and accept it. The other frames are then drawn to match it,
-                    so the product, the setting and the light stay the same.
+                    The first picture you draw sets the look of the video: the others are drawn to match it, so the
+                    product, the setting and the light stay the same. Get that one right first.
                   </p>
                 )}
               </div>

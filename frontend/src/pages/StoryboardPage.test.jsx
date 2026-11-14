@@ -114,8 +114,25 @@ describe('Storyboard step', () => {
     const card = open([withFrame('0', { issues: [{ kind: 'scale', detail: 'The watch is wider than the wrist.' }] })]);
     expect(card(1).getByRole('img').getAttribute('src')).toBe('https://files.test/f1.png');
     expect(card(1).getByText('The watch is wider than the wrist.')).toBeTruthy();
-    await userEvent.click(card(1).getByRole('button', { name: 'Use this picture' }));
+    const use = card(1).getByRole('checkbox', { name: /Start this scene's video on this picture/ });
+    expect(use.checked).toBe(false);
+    await userEvent.click(use);
     expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1', { accepted: true });
+  });
+
+  it('draws the first picture alone when no look is set, then the rest', async () => {
+    const order = [];
+    let release;
+    addStoryboardFrame.mockImplementation((pid, sceneId) => {
+      order.push(sceneId);
+      return sceneId === '0' ? new Promise((resolve) => { release = resolve; }) : Promise.resolve({});
+    });
+    open([scene('0'), scene('1'), scene('2')]);
+    await userEvent.click(screen.getByRole('button', { name: 'Draw the 3 missing frames' }));
+    expect(order).toEqual(['0']);              // the others wait for the picture that sets the look
+    release({});
+    await waitFor(() => expect(order).toEqual(['0', '1', '2']));
+    addStoryboardFrame.mockImplementation(async () => ({}));
   });
 
   it('warns that drawn pictures are not used until accepted, and accepts them all at once', async () => {
@@ -144,7 +161,9 @@ describe('Storyboard step', () => {
     expect(card(1).getByText('Sets the look of the video')).toBeTruthy();
     await userEvent.click(card(1).getByRole('checkbox', { name: /match this one/ }));
     expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1', { look: false });
-    await userEvent.click(card(1).getByRole('button', { name: 'Stop using it' }));
+    const use = card(1).getByRole('checkbox', { name: /Start this scene's video on this picture/ });
+    expect(use.checked).toBe(true);
+    await userEvent.click(use);
     expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1', { accepted: false });
     expect(screen.getByRole('button', { name: /Generate videos/ })).toBeTruthy();
   });
@@ -172,7 +191,7 @@ describe('Storyboard step', () => {
   it('shows what went wrong on the scene it happened on', async () => {
     editStoryboardFrame.mockRejectedValueOnce(new Error('This frame no longer exists.'));
     const card = open([withFrame('0')]);
-    await userEvent.click(card(1).getByRole('button', { name: 'Use this picture' }));
+    await userEvent.click(card(1).getByRole('checkbox', { name: /Start this scene's video/ }));
     expect((await card(1).findByRole('alert')).textContent).toContain('This frame no longer exists.');
   });
 
