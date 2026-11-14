@@ -1596,7 +1596,7 @@ def stitch_videos(
     "end" for the end card), "at" (seconds in that clip's file), "volume" (0 to 100)}]. Each is
     leveled and mixed in at its moment; see place_sounds for which are left out. `report` also
     receives "sounds": how many were mixed in.
-    end_card: optional {"image_path", "seconds"}: a closing card after the
+    end_card: optional {"image_path", "seconds", "voice"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
     Picture: every clip is trimmed (with tight_cuts, the dead air before the first word and after the
@@ -1658,8 +1658,26 @@ def stitch_videos(
                 end_card["image_path"], os.path.join(work_dir, "end_card.mp4"), width, height, fps,
                 seconds=end_card.get("seconds") or END_CARD_DEFAULT_SECONDS,
             )
+            card_gain, card_speech = 0.0, []
+            card_voice = end_card.get("voice") if isinstance(end_card.get("voice"), dict) else None
+            if card_voice and os.path.exists(str(card_voice.get("path") or "")):
+                # The end of the last scene's narration, still to be said: it carries on over the card,
+                # as loud as it was in its scene, and the music stays down under it.
+                spoken = max(0.0, float(card_voice["end"]) - float(card_voice["start"]))
+                voiced_path = os.path.join(work_dir, "end_card_voiced.mp4")
+                _run_ffmpeg([
+                    "ffmpeg", "-y", "-v", "error", "-i", card_path, "-i", card_voice["path"], "-filter_complex",
+                    f"[1:a]atrim=start={float(card_voice['start']):.3f}:end={float(card_voice['end']):.3f},"
+                    "asetpts=PTS-STARTPTS,apad[voice]",
+                    "-map", "0:v:0", "-map", "[voice]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                    "-t", f"{probe_media(card_path)['duration']:.3f}", voiced_path,
+                ], "Putting the narration on the end card")
+                card_path = voiced_path
+                card_gain = float(clips[-1].get("gain_db") or 0.0) if clips else 0.0
+                card_speech = [(0.0, spoken)]
             card = probe_media(card_path)
-            card.update({"gain_db": 0.0, "trim_start": 0.0, "speech": []})
+            card_speech = [(a, min(b, float(card["duration"]))) for a, b in card_speech]
+            card.update({"gain_db": card_gain, "trim_start": 0.0, "speech": card_speech})
             video_paths = list(video_paths) + [card_path]
             clips.append(card)
             total_duration += max(0.05, card["duration"])

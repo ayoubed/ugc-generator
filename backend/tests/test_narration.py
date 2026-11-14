@@ -258,3 +258,33 @@ def test_the_last_scene_has_nowhere_to_carry_on(stitch, fake_db, monkeypatch):
     fake_db.collection("projects").document("p1").collection("scenes").document("1").update({"narration": MADE})
     stitch({})
     assert len(put) == 1 and len(put[0]) == 1
+
+
+def test_a_narrated_scene_and_the_one_after_it_are_not_tightened_around_their_words(stitch, fake_db, monkeypatch):
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 8.0, "has_audio": True})
+    fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})
+    project, seen = stitch({"narration": {"0": {"at": 2.0}}, "edits": {"1": {"attempt": 1, "start": 0.5, "volume": 0.8}}})
+    assert seen["stitched"]["edits"] == [
+        {"start": 0.0, "end": 8.0},                                   # the pause before the voice stays
+        {"start": 0.5, "end": 8.0, "attempt": 1, "volume": 0.8},      # a trim made in the editor still applies
+    ]
+    assert project["finalVideos"].values[-1]["edits"] == {"1": {"attempt": 1, "start": 0.5, "volume": 0.8}}   # recorded as set
+
+
+def test_scenes_without_a_narration_nearby_are_cut_as_before(stitch):
+    project, seen = stitch({})
+    assert seen["stitched"]["edits"] == [None, None]
+
+
+def test_the_last_scene_voice_carries_on_over_the_end_card(stitch, fake_db, monkeypatch):
+    monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: out)
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 3.0, "has_audio": True})
+    fake_db.collection("projects").document("p1").collection("scenes").document("1").update({"narration": MADE})   # 4s on a 3s scene
+    card = {"enabled": True, "imageRef": "users/u1/projects/p1/end_card_1.png", "seconds": 3}
+    project, seen = stitch({"endCard": card})
+    voice = seen["stitched"]["end_card"]["voice"]
+    assert (voice["start"], voice["end"]) == (3.0, 4.0) and voice["path"].endswith("narration_1.mp3")
+
+    project, seen = stitch({"endCard": {**card, "enabled": False}})
+    assert seen["stitched"]["end_card"] is None                        # no card: nowhere to carry on

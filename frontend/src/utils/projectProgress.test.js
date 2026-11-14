@@ -138,7 +138,8 @@ describe('final videos', () => {
     expect(finalVideoChangeReason(then, scenes, { settings: {} })).toBe(reason);                    // back to automatic
     expect(finalVideoChangeReason({ ...then, captionBlocks: {} }, scenes, placed(1))).toBe(reason);    // placed since
     const before = { ...stitched, captions: 'highlight' };
-    expect(finalVideoChangeReason(before, scenes, placed(1))).toBe('');     // stitched before this existed
+    expect(finalVideoChangeReason(before, scenes, placed(1))).toBe(reason);          // stitched before this existed: out of date
+    expect(finalVideoChangeReason(before, scenes, { settings: {} })).toBe('');
   });
 
   it('notices a narration that was made, moved or switched off since', () => {
@@ -151,7 +152,8 @@ describe('final videos', () => {
     expect(finalVideoChangeReason(then, told, { settings: { narration: { [id]: { at: 1 } } } })).toBe(reason);
     expect(finalVideoChangeReason(then, told, { settings: { narration: { [id]: { on: false } } } })).toBe(reason);
     expect(finalVideoChangeReason({ ...stitched, narration: {} }, told, { settings: {} })).toBe(reason);
-    expect(finalVideoChangeReason(stitched, told, { settings: {} })).toBe('');     // stitched before narrations existed
+    expect(finalVideoChangeReason(stitched, told, { settings: {} })).toBe(reason);    // stitched before narrations existed: out of date
+    expect(finalVideoChangeReason(stitched, scenes, { settings: {} })).toBe('');
   });
 
   it('notices skipped scenes, music, captions and the end card', () => {

@@ -1160,13 +1160,21 @@ def _run_stitch_job_sync(
                 ) from e
             narrations[doc_id] = narration
             own_voices[position] = narration_voice(narration, narration_local)
-            if position + 1 < len(scenes_list):
-                clip_seconds = float(probe_media(local_video_paths[position])["duration"])
-                kept_end = min(clip_seconds, float((edits[position] or {}).get("end", clip_seconds)))
-                tail = narration_tail(narration, kept_end)
-                if tail:
-                    next_start = float((edits[position + 1] or {}).get("start") or 0)
-                    tails[position + 1] = {"path": narration_local, "at": next_start, **tail}
+            clip_seconds = float(probe_media(local_video_paths[position])["duration"])
+            kept_end = min(clip_seconds, float((edits[position] or {}).get("end", clip_seconds)))
+            tail = narration_tail(narration, kept_end)
+            if tail and position + 1 < len(scenes_list):
+                next_start = float((edits[position + 1] or {}).get("start") or 0)
+                tails[position + 1] = {"path": narration_local, "at": next_start, **tail}
+            elif tail and end_card:
+                end_card["voice"] = {"path": narration_local, **tail}   # the last scene: on over the end card
+        # A voice placed by hand must stay where it was put: a narrated scene, and the scene after
+        # it (which may carry its end), are not tightened around their words. Trims made in the
+        # editor still apply.
+        stitch_edits = list(edits)
+        for position in sorted(set(own_voices) | {p + 1 for p in own_voices if p + 1 < len(scenes_list)}):
+            whole = {"start": 0.0, "end": float(probe_media(local_video_paths[position])["duration"])}
+            stitch_edits[position] = {**whole, **(edits[position] or {})}
         for position, voice_over in own_voices.items():
             doc_id = scenes_list[position][1]
             local_video_paths[position] = voiced_scene(
@@ -1237,7 +1245,7 @@ def _run_stitch_job_sync(
             tight_cuts=tight_cuts,
             end_card=end_card,
             caption_words=caption_words,
-            edits=edits,
+            edits=stitch_edits,
             report=stitch_report,
             caption_blocks=[placed_captions[doc_id] for _, doc_id, _ in scenes_list] if captions else None,
             sounds=stitch_sounds,

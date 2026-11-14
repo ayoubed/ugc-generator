@@ -3377,6 +3377,7 @@ a:hover {
 .editor-preview { display: grid; justify-items: center; background: var(--bg-media); border-radius: var(--radius-btn); overflow: hidden; min-height: 160px; }
 .editor-preview video { grid-area: 1 / 1; max-height: 360px; max-width: 100%; display: block; visibility: hidden; }
 .editor-preview video.is-current { visibility: visible; }
+.editor-card-picture { grid-area: 1 / 1; max-height: 360px; max-width: 100%; display: block; object-fit: contain; }
 .editor-inspector { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-btn); background: var(--bg-card); min-height: 160px; }
 .editor-inspector .field-hint { margin: 0; }
 .editor-inspector-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }

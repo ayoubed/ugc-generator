@@ -826,6 +826,26 @@ describe('narration: a voice made from text', () => {
     expect(width(last)).toBe(`${2 * PPS}px`);                             // only the part that is heard
   });
 
+  it('runs on over the end card when it is the last scene\'s voice', async () => {
+    const card = { enabled: true, imageRef: 'card.png', imageUrl: 'https://files.test/card.png', seconds: 3 };
+    show({ settings: { voice: VOICE, endCard: card, narration: { 1: { at: 3 } } }, scenes: list(scene('0'), scene('1', { narration: MADE })) });
+    const last = track('Voice track').getByRole('button', { name: /^Narration of scene 2/ });
+    expect(width(last)).toBe(`${3 * PPS}px`);                             // 2s in its scene, 1s over the card
+    await userEvent.click(last);
+    expect(screen.getByText(/it carries on for 1\.0s over the end card\./)).toBeTruthy();
+  });
+
+  it('is not tightened by an earlier automatic cut, and neither is the scene after it', () => {
+    const cuts = { 0: { start: 1, end: 4, attempt: 1 }, 1: { start: 1, end: 4, attempt: 1 } };
+    const project = { finalVideos: [{ version: 1, storageRef: 'f.mp4', cuts, edits: {} }], finalVideoVersion: 1 };
+    const { unmount } = show({ project });
+    expect(width(clip(1).parentElement)).toBe(`${3 * PPS}px`);            // the automatic cut of that version
+    unmount();
+    show({ project, settings: { voice: VOICE }, scenes: list(scene('0', { narration: MADE }), scene('1'), scene('2')) });
+    expect(width(clip(1).parentElement)).toBe(`${5 * PPS}px`);            // narrated: whole
+    expect(width(clip(2).parentElement)).toBe(`${5 * PPS}px`);            // the scene after it: whole
+  });
+
   it('keeps talking in the preview when the next scene comes on', async () => {
     narrated({ narration: { 0: { at: 3 } } });
     const voice = screen.getByTestId('narration-0');
@@ -1030,5 +1050,59 @@ describe('captions placed by hand', () => {
   it('has no Add caption button when captions are off', () => {
     show({ settings: { captions: { style: 'none' } } });
     expect(screen.queryByRole('button', { name: 'Add caption' })).toBeNull();
+  });
+});
+
+describe('the end card in the preview', () => {
+  const card = { enabled: true, imageRef: 'card.png', imageUrl: 'https://files.test/card.png', seconds: 2 };
+  const picture = () => screen.queryByAltText('Preview: end card');
+
+  it('is shown when its block is selected, in place of the scene', async () => {
+    show({ settings: { endCard: card } });
+    expect(picture()).toBeNull();
+    await userEvent.click(track('Video track').getByRole('button', { name: 'End card, 2 seconds' }));
+    expect(picture().getAttribute('src')).toBe('https://files.test/card.png');
+    expect(screen.queryByLabelText(/^Preview: scene/)).toBeNull();
+    await userEvent.click(clip(1));
+    expect(picture()).toBeNull();                                           // back on a scene
+    expect(screen.getByLabelText('Preview: scene 1')).toBeTruthy();
+  });
+
+  it('is shown when the playhead is dragged onto it', () => {
+    show({ settings: { endCard: card } });
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 11 * PPS, pointerId: 1 });   // 1s into the card
+    expect(picture()).toBeTruthy();
+    expect(screen.getByText('0:11.0 / 0:12.0')).toBeTruthy();
+  });
+
+  it('comes on after the last scene while playing, runs for its length, then stops', async () => {
+    show({ settings: { endCard: { ...card, seconds: 0.3 } } });
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 9.5 * PPS, pointerId: 1 });   // near the end of scene 2
+    fireEvent.pointerUp(screen.getByTestId('editor-ruler'), { pointerId: 1 });
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    fireEvent.ended(screen.getByLabelText('Preview: scene 2'));
+    expect(picture()).toBeTruthy();                                         // the card is on, still playing
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Play' })).toBeTruthy(), { timeout: 2000 });
+    expect(screen.getByText('0:10.3 / 0:10.3')).toBeTruthy();
+    expect(picture()).toBeTruthy();                                         // it rests on the card
+  });
+
+  it('plays what is left of the last scene\'s voice over the card', async () => {
+    const narration = { text: 'Line.', storageRef: 'n.mp3', url: 'https://files.test/n.mp3', seconds: 4 };
+    show({ settings: { endCard: card, narration: { 1: { at: 3 } } }, scenes: list(scene('0'), scene('1', { narration })) });
+    const voice = screen.getByTestId('narration-1');
+    voice.play = vi.fn(async () => {});
+    voice.pause = vi.fn();
+    Object.defineProperty(voice, 'paused', { value: true, configurable: true, writable: true });
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 10.5 * PPS, pointerId: 1 });  // half a second into the card
+    expect(voice.currentTime).toBe(2.5);                                    // 2s were said in its scene
+  });
+
+  it('without an end card the preview stops after the last scene, as before', async () => {
+    show();
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 30 * PPS, pointerId: 1 });
+    expect(screen.getByText('0:10.0 / 0:10.0')).toBeTruthy();
+    expect(picture()).toBeNull();
   });
 });

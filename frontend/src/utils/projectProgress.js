@@ -465,14 +465,15 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
         && squash(finalVideo.captionTexts[s.id]) !== squash(sceneCaptionText(project, s)));
       if (edited) return 'The caption text changed since this version was stitched.';
     }
-    // Captions placed by hand: added, removed, moved, trimmed or reworded since. Versions stitched
-    // before that existed don't record them, so they aren't flagged.
-    if (finalVideo.captionBlocks && typeof finalVideo.captionBlocks === 'object' && projectCaptionStyle(project) !== 'none') {
+    // Captions placed by hand: added, removed, moved, trimmed or reworded since. A version stitched
+    // before that existed has none recorded: it is out of date as soon as a scene is placed by hand.
+    if (projectCaptionStyle(project) !== 'none') {
+      const recorded = finalVideo.captionBlocks && typeof finalVideo.captionBlocks === 'object' ? finalVideo.captionBlocks : {};
       const placed = projectCaptionBlocks(project);
       const moved = scenes.some((s) => {
         if (isSceneSkipped(s)) return false;
         const now = isCaptionedByHand(project, s.id) ? blocksSignature(blocksOfScene(placed, s.id)) : null;
-        const then = s.id in finalVideo.captionBlocks ? finalVideo.captionBlocks[s.id] : null;
+        const then = s.id in recorded ? recorded[s.id] : null;
         return now !== then;
       });
       if (moved) return 'The captions changed since this version was stitched.';
@@ -488,9 +489,11 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
         : '';
       if (now !== then) return 'The end card changed since this version was stitched.';
     }
-    // Versions stitched before narrations existed have no narration field, so they aren't flagged.
-    if (finalVideo.narration && typeof finalVideo.narration === 'object') {
-      const changed = (scenes || []).some((s) => !isSceneSkipped(s) && (finalVideo.narration[s.id] || '') !== narrationKey(project, s));
+    // A version stitched before narrations existed has none recorded: it is out of date as soon as
+    // a scene has one.
+    {
+      const told = finalVideo.narration && typeof finalVideo.narration === 'object' ? finalVideo.narration : {};
+      const changed = (scenes || []).some((s) => !isSceneSkipped(s) && (told[s.id] || '') !== narrationKey(project, s));
       if (changed) return 'The narration changed since this version was stitched.';
     }
     // Same for the editor: only versions that recorded their edits can be compared.

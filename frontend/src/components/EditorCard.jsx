@@ -112,6 +112,10 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const canvas = useRef(null);
   const [selected, setSelected] = useState(null); // { type: 'clip' | 'caption', id } | { type: 'music' | 'card' } | null
   const [time, setTime] = useState(0);            // the playhead, in seconds of the timeline
+  // The end card on screen: how far into it the playhead is (null = a scene is on screen). It has
+  // no player of its own, so while it plays the time comes from the clock.
+  const [cardAt, setCardAt] = useState(null);
+  const cardClock = useRef({ base: 0, since: 0 });
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(null);       // pixels per second chosen with the zoom; null = fit the width
   const [viewWidth, setViewWidth] = useState(0);  // width of the visible part of the timeline
@@ -125,11 +129,24 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
 
   const editOf = (scene) => (scene.id in drafts ? drafts[scene.id] : sceneEdit(project, scene));
   const lengthOf = (scene) => durations[scene.id] || fallbackSeconds;
-  const rangeOf = (scene) => keptRange(editOf(scene), lengthOf(scene), autoCut(project, scene));
+  // A voice placed by hand must stay where it was put: a narrated scene, and the scene after it
+  // (which may carry its end), are not tightened around their words when stitched (same rule as
+  // the server), so the automatic cut of an earlier version does not apply to them.
+  const isTold = (scene) => {
+    const narration = sceneNarration(project, scene, scene.id in narrationDrafts ? narrationDrafts[scene.id] : undefined);
+    return Boolean(narration?.on && narration.url);
+  };
+  const cutOf = (scene) => {
+    const index = ready.findIndex((item) => item.scene.id === scene.id);
+    const keepsWhole = isTold(scene) || (index > 0 && isTold(ready[index - 1].scene));
+    return keepsWhole ? null : autoCut(project, scene);
+  };
+  const rangeOf = (scene) => keptRange(editOf(scene), lengthOf(scene), cutOf(scene));
+  const cardSeconds = endCard.enabled && endCard.imageRef ? endCard.seconds : 0;
 
   const timeline = buildTimeline(
     ready.map(({ scene, label }) => ({ id: scene.id, scene, label, ...rangeOf(scene) })),
-    endCard.enabled && endCard.imageRef ? endCard.seconds : 0,
+    cardSeconds,
   );
   const pps = scale || fitScale(viewWidth, timeline.total);
   const place = locate(timeline, time);
@@ -182,7 +199,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   useEffect(() => () => Object.keys(pending.current).forEach(flush), []);
 
   const change = (scene, field, value) => {
-    const next = changeEdit(editOf(scene), field, value, lengthOf(scene), scene.activeAttempt, autoCut(project, scene));
+    const next = changeEdit(editOf(scene), field, value, lengthOf(scene), scene.activeAttempt, cutOf(scene));
     setDrafts((prev) => ({ ...prev, [scene.id]: next }));
     saveSoon(`edits.${scene.id}`, next);
   };
@@ -268,13 +285,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     held.moved = true;
     const narration = narrationOf(clip.scene);
     const next = changeNarration(narration, 'at', held.at + (event.clientX - held.x) / pps, lengthOf(clip.scene));
+    held.next = next;   // what is saved when the pointer is let go, whatever has been redrawn by then
     setNarrationDrafts((prev) => ({ ...prev, [clip.id]: next }));
   };
   const endNarrationDrag = (clip) => {
     const held = narrationDrag.current;
     narrationDrag.current = null;
-    if (held?.moved && held.id === clip.id && narrationDrafts[clip.id]) {
-      pending.current[`narration.${clip.id}`] = narrationDrafts[clip.id];
+    if (held?.moved && held.id === clip.id && held.next) {
+      setNarrationDrafts((prev) => ({ ...prev, [clip.id]: held.next }));
+      pending.current[`narration.${clip.id}`] = held.next;
       flush(`narration.${clip.id}`);
     }
   };
@@ -463,13 +482,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     const next = held.side === 'end'
       ? changeBlock(block, 'length', held.length + shift, seconds)
       : changeBlock({ ...block, length: held.length }, 'at', held.at + shift, seconds);
+    held.next = next;   // what is saved when the pointer is let go, whatever has been redrawn by then
     setBlockDrafts((prev) => ({ ...prev, [block.id]: next }));
   };
   const endBlockDrag = (block) => {
     const held = blockDrag.current;
     blockDrag.current = null;
-    if (held?.moved && held.id === block.id) {
-      pending.current[`captions.blocks.${block.id}`] = storedBlock(block);
+    if (held?.moved && held.id === block.id && held.next) {
+      setBlockDrafts((prev) => ({ ...prev, [block.id]: held.next }));
+      pending.current[`captions.blocks.${block.id}`] = storedBlock(held.next);
       flush(`captions.blocks.${block.id}`);
     }
   };
@@ -533,7 +554,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   // The seconds of the next scene a narration may carry on over (0 for the last scene).
   const roomAfter = (clip) => {
     const next = timeline.clips[timeline.clips.findIndex((item) => item.id === clip.id) + 1];
-    return next ? next.length : 0;
+    return next ? next.length : cardSeconds;   // the last scene's voice may run on over the end card
   };
   const keepAt = (element, spot, jump) => {
     if (spot === null) {
@@ -590,15 +611,43 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     }
     syncNarration(seek.current.clipTime, { jump: true });
   };
+  // The end card on screen, `seconds` into it: the scenes' players rest, and what is left of the
+  // last scene's narration carries on.
+  const lastClip = timeline.clips[timeline.clips.length - 1] || null;
+  const syncCard = (seconds, { jump = false } = {}) => {
+    const told = lastClip ? activeNarration(lastClip.scene) : null;
+    const tail = told ? narrators.current[lastClip.id] : null;
+    if (!tail) return;
+    const edit = editOf(lastClip.scene);
+    tail.muted = Boolean(edit?.muted);
+    tail.volume = previewGain(edit?.volume);
+    keepAt(tail, narrationTailClock(told, lastClip, { start: 0 }, seconds), jump);
+  };
+  const enterCard = (seconds) => {
+    Object.values(videos.current).forEach((element) => element?.pause?.());
+    Object.values(dubs.current).forEach((element) => element?.pause?.());
+    Object.entries(narrators.current).forEach(([id, element]) => { if (id !== lastClip?.id) element?.pause?.(); });
+    cardClock.current = { base: seconds, since: Date.now() };
+    setCardAt(seconds);
+    setTime(timeline.clipsEnd + seconds);
+    syncCard(seconds, { jump: true });
+  };
   const quietSounds = () => {
     started.current = new Set();
     Object.values(soundPlayers.current).forEach((element) => element?.pause?.());
   };
   const goTo = (seconds) => {
-    const target = Math.max(0, Math.min(seconds, timeline.clipsEnd));
+    const target = Math.max(0, Math.min(seconds, cardSeconds > 0 ? timeline.total : timeline.clipsEnd));
     const spot = locate(timeline, target);
     if (!spot) return;
     quietSounds();
+    if (cardSeconds > 0 && target > timeline.clipsEnd + 0.001) {
+      enterCard(target - timeline.clipsEnd);
+      const music = audio.current;
+      if (music && Number.isFinite(music.duration) && music.duration > 0) music.currentTime = target % music.duration;
+      return;
+    }
+    setCardAt(null);
     seek.current = { clipTime: spot.clipTime, token: seek.current.token + 1 };
     setTime(target);
     if (spot.index === place?.index) applySeek();
@@ -615,7 +664,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   };
   const play = () => {
     if (!current) return;
-    if (time >= timeline.clipsEnd - 0.05) goTo(0);
+    if (cardAt !== null && cardAt < cardSeconds - 0.05) {
+      cardClock.current = { base: cardAt, since: Date.now() };   // carries on from where the card was paused
+    } else if (cardAt !== null || time >= timeline.clipsEnd - 0.05) goTo(0);
     setPlaying(true);
   };
   // Starts or stops the players when "playing" flips, and keeps the music volume current.
@@ -623,9 +674,11 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     const track = audio.current;
     if (track) track.volume = previewMusicGain(musicPercent);
     if (!playing) return;
-    player()?.play?.()?.catch?.(() => {});
-    dub()?.play?.()?.catch?.(() => {});
-    if (player()) syncNarration(player().currentTime);
+    if (cardAt === null) {
+      player()?.play?.()?.catch?.(() => {});
+      dub()?.play?.()?.catch?.(() => {});
+      if (player()) syncNarration(player().currentTime);
+    } else syncCard(cardAt);
     track?.play?.()?.catch?.(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, musicPercent]);
@@ -696,6 +749,10 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     if (!current) return;
     const next = timeline.clips[place.index + 1];
     if (!next) {
+      if (cardSeconds > 0 && playing) {
+        enterCard(0);   // the end card comes on, and the music and the narration carry on
+        return;
+      }
       stop();
       setTime(timeline.clipsEnd);
       return;
@@ -703,7 +760,39 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     seek.current = { clipTime: next.start, token: seek.current.token + 1 };
     setTime(next.at);
   };
+  // A sound effect starts when the playhead reaches it (or part-way in, when playing from its middle).
+  const startSounds = (now) => {
+    heardSounds.forEach((sound) => {
+      if (started.current.has(sound.id) || now < sound.time || now >= sound.time + sound.seconds - 0.05) return;
+      started.current.add(sound.id);
+      const effect = soundPlayers.current[sound.id];
+      if (!effect) return;
+      effect.volume = previewSoundGain(sound.volume);
+      effect.currentTime = now - sound.time > 0.1 ? now - sound.time : 0;
+      effect.play?.()?.catch?.(() => {});
+    });
+  };
+  // While the end card is on screen the clock moves the playhead; at its end the preview stops.
+  const advanceCard = () => {
+    const seconds = cardClock.current.base + (Date.now() - cardClock.current.since) / 1000;
+    if (seconds >= cardSeconds) {
+      stop();
+      setCardAt(cardSeconds);
+      setTime(timeline.total);
+      return;
+    }
+    syncCard(seconds);
+    startSounds(timeline.clipsEnd + seconds);
+    setCardAt(seconds);
+    setTime(timeline.clipsEnd + seconds);
+  };
+  useEffect(() => {
+    if (!playing || cardAt === null) return undefined;
+    const timer = setInterval(advanceCard, PLAYHEAD_REDRAW_MS);
+    return () => clearInterval(timer);
+  });
   const advance = () => {
+    if (cardAt !== null) return;
     const element = player();
     if (!element || !current) return;
     if (element.currentTime >= current.end - 0.03) {
@@ -723,17 +812,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       voiceOver.currentTime = element.currentTime;
     }
     syncNarration(element.currentTime);
-    // A sound effect starts when the playhead reaches it (or part-way in, when playing from its middle).
     const now = timelineTime(timeline, place.index, element.currentTime);
-    heardSounds.forEach((sound) => {
-      if (started.current.has(sound.id) || now < sound.time || now >= sound.time + sound.seconds - 0.05) return;
-      started.current.add(sound.id);
-      const effect = soundPlayers.current[sound.id];
-      if (!effect) return;
-      effect.volume = previewSoundGain(sound.volume);
-      effect.currentTime = now - sound.time > 0.1 ? now - sound.time : 0;
-      effect.play?.()?.catch?.(() => {});
-    });
+    startSounds(now);
     // The playhead is redrawn about 12 times a second: redrawing the whole editor on every frame
     // made the sound stutter on phones.
     if (nowMs - lastDraw.current < PLAYHEAD_REDRAW_MS) return;
@@ -782,7 +862,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const width = Math.max(1, timeline.total * pps);
   const chosen = selected?.type === 'clip' ? timeline.clips.find((clip) => clip.id === selected.id) : null;
   const chosenEdit = chosen ? editOf(chosen.scene) : null;
-  const chosenAuto = chosen ? autoCut(project, chosen.scene) : null;
+  const chosenAuto = chosen ? cutOf(chosen.scene) : null;
   const select = (clip) => {
     setSelected({ type: 'clip', id: clip.id });
     // Also while playing: the scene being adjusted is the one that is heard.
@@ -884,7 +964,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       <div className="editor-stage">
         <div className="editor-preview">
           {timeline.clips.map((clip) => {
-            const isCurrent = clip.id === current?.id;
+            const isCurrent = cardAt === null && clip.id === current?.id;
             return (
               <video
                 key={clip.id}
@@ -905,6 +985,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               />
             );
           })}
+          {cardAt !== null && endCard.imageUrl && (
+            <img className="editor-card-picture" src={endCard.imageUrl} alt="Preview: end card" />
+          )}
           {music?.url && <audio ref={audio} src={music.url} loop preload="auto" aria-hidden="true" />}
           {sounds.map((sound) => (sound.url ? (
             <audio
@@ -1046,7 +1129,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                   </label>
                   <p className={`field-hint ${voiceLost > 0 ? 'is-warning' : ''}`} role="status">
                     {voiceOverflow <= 0 && `The voice is ${voiceNarration.length.toFixed(1)}s and fits the scene (${voiceClip.length.toFixed(1)}s). Drag it on the Voice track to slide it against the picture.`}
-                    {voiceOverflow > 0 && voiceLost <= 0 && `The voice is ${voiceNarration.length.toFixed(1)}s: it carries on for ${voiceOverflow.toFixed(1)}s over scene ${voiceNext.label}.`}
+                    {voiceOverflow > 0 && voiceLost <= 0 && `The voice is ${voiceNarration.length.toFixed(1)}s: it carries on for ${voiceOverflow.toFixed(1)}s over ${voiceNext ? `scene ${voiceNext.label}` : 'the end card'}.`}
                     {voiceLost > 0 && (voiceNext
                       ? `The voice is ${voiceNarration.length.toFixed(1)}s: it carries on over scene ${voiceNext.label}, but its last ${voiceLost.toFixed(1)}s run past the end of that scene and are not heard. Start it earlier, cut it, or shorten the text.`
                       : `The voice is ${voiceNarration.length.toFixed(1)}s and runs ${voiceLost.toFixed(1)}s past the end of the video: that part is not heard. Start it earlier, cut it, or shorten the text.`)}
@@ -1306,7 +1389,10 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                   style={{ left: `${timeline.clipsEnd * pps}px`, width: `${(timeline.total - timeline.clipsEnd) * pps}px` }}
                   aria-pressed={selected?.type === 'card'}
                   aria-label={`End card, ${endCard.seconds} seconds`}
-                  onClick={() => setSelected({ type: 'card' })}
+                  onClick={() => {
+                    setSelected({ type: 'card' });
+                    if (!playing) goTo(timeline.clipsEnd + 0.01);   // shows the card in the preview
+                  }}
                 >
                   <span className="tl-block-text">End card</span>
                 </button>
