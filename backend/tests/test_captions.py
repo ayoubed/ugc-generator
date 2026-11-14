@@ -78,3 +78,20 @@ def test_a_typed_caption_is_used_only_while_the_script_is_the_one_it_replaced():
     assert scene_caption_text(settings, "3", {"script": "Quiet."}) == ""
     assert scene_caption_text(settings, "4", {"script": "Just the script."}) == "Just the script."
     assert scene_caption_text({}, "0", {}) == ""
+
+
+def test_a_line_never_stays_up_into_the_next_group_of_words():
+    first, second = [("Hello", 0.0, 1.0)], [("there", 1.1, 2.0)]
+    ass = captions.build_ass([first, [], second], "minimal", 1080, 1920)
+    events = [line for line in ass.splitlines() if line.startswith("Dialogue:")]
+    assert len(events) == 2
+    assert events[0].split(",")[2] == "0:00:01.10"                                    # not 1.25: the next one starts at 1.1
+    assert events[1].split(",")[2] == "0:00:02.25"                                    # the last one keeps its short hold
+
+
+def test_words_can_be_spread_over_a_stretch_of_time():
+    words = captions.block_words("Looks far more expensive.", 2.0, 1.5)
+    assert [w[0] for w in words] == ["Looks", "far", "more", "expensive."]
+    assert words[0][1] == 2.0 and abs(words[-1][2] - 3.5) < 0.01
+    assert captions.block_words("  ", 0, 1) == []
+

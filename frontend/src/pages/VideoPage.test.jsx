@@ -94,6 +94,14 @@ describe('Video step: before the first stitch', () => {
     expect(screen.getByRole('heading', { name: 'End card' })).toBeTruthy();
   });
 
+  it('captions a narrated scene with what its voice says, and offers no text box for it', () => {
+    const narration = { text: 'This watch [pause 1] looks expensive.', storageRef: 'n.mp3', url: 'https://files.test/n.mp3', seconds: 3 };
+    open({ scenes: [scene('0', { narration }), scene('1')] });
+    expect(screen.getByText(/Follows this scene's narration: “This watch looks expensive\.”/)).toBeTruthy();
+    expect(document.getElementById('video-caption-0')).toBeNull();
+    expect(document.getElementById('video-caption-1').value).toBe('Line 1.');
+  });
+
   it('goes back to Generate from the bar', async () => {
     const bar = open();
     await userEvent.click(bar.getByRole('button', { name: '← Generate' }));

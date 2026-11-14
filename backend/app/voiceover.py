@@ -239,3 +239,58 @@ def voiced_scene(video_path: str, voices: List[Dict[str, Any]], output_path: str
         "Putting the narration on the scene",
     )
     return output_path
+
+
+# --- captions of a narrated scene: the voice's own words, where it says them ---------------------------
+
+def narration_word_times(scene_ref, scene_data: Dict[str, Any], narration_path: str) -> List[tuple]:
+    """
+    When each word of the scene's narration is said, in seconds of its recording: [(word, start, end)].
+    Found once per recording with the voice service and kept on the scene (narration.words); when
+    that fails the words are spread over the recording, so a caption is still shown.
+    """
+    made = (scene_data or {}).get("narration") or {}
+    text = elevenlabs.without_pauses(str(made.get("text") or ""))
+    try:
+        saved = [(str(w["word"]), float(w["start"]), float(w["end"])) for w in made.get("words") or []]
+    except (KeyError, TypeError, ValueError):
+        saved = []
+    if saved:
+        return saved
+    try:
+        words = elevenlabs.align_words(narration_path, text)
+    except Exception as e:
+        logger.warning("Could not time the words of a narration (%s); spreading them instead.", e)
+        words = []
+    if not words:
+        from app.captions import block_words
+        return block_words(text, 0.0, _number(made.get("seconds")) or 1.0)
+    try:
+        scene_ref.update({"narration.words": [{"word": w, "start": a, "end": b} for w, a, b in words]})
+    except Exception as e:   # the words are still used; only the reuse is lost
+        logger.warning("Could not keep the word times of a narration: %s", e)
+    return words
+
+
+def narration_captions(
+    words: List[tuple], narration: Dict[str, Any], kept_end: float, next_start: float = 0.0
+) -> tuple:
+    """
+    The narration's words as captions: (in its own scene, in what follows). Both are [(word, start,
+    end)]; the first in seconds of the scene's clip, the second in seconds of the next clip (which
+    starts at `next_start` of its file) or of the end card. Words cut away by the trims are left out;
+    a word still being said when the scene ends at `kept_end` is shown in what follows.
+    """
+    first, last = narration["trimStart"], narration["seconds"] - narration["trimEnd"]
+    own, after = [], []
+    for word, start, end in words:
+        if end <= first or start >= last:
+            continue
+        a = narration["at"] + (max(start, first) - first)
+        b = narration["at"] + (min(end, last) - first)
+        if (a + b) / 2 < kept_end:
+            own.append((word, round(a, 3), round(min(b, kept_end), 3)))
+        else:
+            after.append((word, round(next_start + max(0.0, a - kept_end), 3), round(next_start + (b - kept_end), 3)))
+    return own, after
+

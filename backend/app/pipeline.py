@@ -16,7 +16,7 @@ import difflib
 from app.models import Scene, SceneList, AssetBible, TakeCheckResult, FrameCheckResult, ReferenceBreakdown
 from app.model_registry import get_video_model, get_music_model, get_image_model, TAKE_CHECK_MODEL_ID, REFERENCE_MODEL_ID
 from app import prompts
-from app.captions import block_words, build_ass, fit_block_to_clip, fit_words_to_clip, word_timings
+from app.captions import build_ass, fit_words_to_clip, word_timings
 from app.beats import music_fit_for_cuts
 
 logger = logging.getLogger(__name__)
@@ -1580,7 +1580,6 @@ def stitch_videos(
     caption_words: Optional[List[Optional[List[Tuple[str, float, float]]]]] = None,
     edits: Optional[List[Optional[Dict[str, Any]]]] = None,
     report: Optional[Dict[str, Any]] = None,
-    caption_blocks: Optional[List[Optional[List[Dict[str, Any]]]]] = None,
     sounds: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
@@ -1596,15 +1595,12 @@ def stitch_videos(
     "end" for the end card), "at" (seconds in that clip's file), "volume" (0 to 100)}]. Each is
     leveled and mixed in at its moment; see place_sounds for which are left out. `report` also
     receives "sounds": how many were mixed in.
-    end_card: optional {"image_path", "seconds", "voice"}: a closing card after the
+    end_card: optional {"image_path", "seconds", "voice", "caption_words"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
     Picture: every clip is trimmed (with tight_cuts, the dead air before the first word and after the
     last one goes), brought to the same size and frame rate, joined, and encoded once. With a
     caption_style, the scripts in caption_texts (one per clip) are burned in as captions.
-    caption_blocks: optional, one entry per clip. A list (even an empty one) means the clip's
-    captions were placed by hand: [{"at", "length", "text"}] in seconds of the untrimmed clip. Each
-    is shown exactly then, in place of the automatic caption; None keeps the automatic caption.
 
     Audio: every scene is leveled to the same loudness (measured, fixed gain) with a tiny fade at each
     cut, a very quiet room tone runs under everything, an optional music track runs under the whole
@@ -1696,27 +1692,24 @@ def stitch_videos(
         video_parts.append(f"{joined}concat=n={len(clips)}:v=1:a=0[vcat]")
         video_out = "[vcat]"
 
-        if caption_style and (caption_texts or caption_blocks):
+        if caption_style and caption_texts:
             timed, offset = [], 0.0
             for index, (clip, text) in enumerate(zip(clips, caption_texts)):
                 d = max(0.05, clip["duration"])
-                placed = caption_blocks[index] if caption_blocks and index < len(caption_blocks) else None
-                if placed is not None:
-                    # Each caption placed by hand is a group of its own, shown when it was put.
-                    for block in sorted(placed, key=lambda b: float(b.get("at") or 0)):
-                        words = fit_block_to_clip(
-                            block_words(str(block.get("text") or ""), float(block.get("at") or 0), float(block.get("length") or 0)),
-                            clip["trim_start"], d,
-                        )
-                        timed.append([(w, offset + a, offset + b) for w, a, b in words])
-                    offset += d
-                    continue
                 exact = caption_words[index] if caption_words and index < len(caption_words) else None
-                words = fit_words_to_clip(exact, clip["trim_start"], d) if exact else []
-                if not words:
+                if exact is None:
+                    # No measured times: the words are spread over where speech is heard.
                     words = word_timings(text or "", clip.get("speech") or [], d)
+                else:
+                    # Measured (an empty list: nothing is said here, so nothing is shown).
+                    words = fit_words_to_clip(exact, clip["trim_start"], d)
                 timed.append([(w, offset + a, offset + b) for w, a, b in words])
                 offset += d
+            card_words = (end_card or {}).get("caption_words") if has_end_card else None
+            if card_words:
+                # What is left of the last scene's narration is said over the end card.
+                card_seconds = max(0.05, float(clips[-1]["duration"]))
+                timed.append([(w, offset + a, offset + b) for w, a, b in fit_words_to_clip(card_words, 0.0, card_seconds)])
             if any(timed):
                 # Written next to the other work files and referenced by name (ffmpeg runs in work_dir),
                 # so no path needs escaping inside the filter.

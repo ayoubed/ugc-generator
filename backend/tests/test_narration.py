@@ -198,22 +198,103 @@ def test_removing_it_gives_the_scene_its_own_sound_back(studio):
 
 # --- the stitch ---------------------------------------------------------------------------------------
 
-def test_the_stitch_puts_the_narration_on_its_scene_and_times_captions_on_it(stitch, fake_db, monkeypatch):
+WORDS = [("This", 0.0, 0.5), ("watch", 0.5, 1.5), ("looks", 1.5, 2.5), ("expensive.", 2.5, 4.0)]
+
+
+@pytest.fixture
+def worded(monkeypatch):
+    """The stitch with ffmpeg replaced and the narration's word times known."""
     put = []
     monkeypatch.setattr(jobs, "voiced_scene", lambda video, voices, out, keep_own_sound=False: put.append((voices, keep_own_sound)) or out)
+    monkeypatch.setattr(jobs, "narration_word_times", lambda ref, data, path: WORDS)
+    return put
+
+
+def test_the_stitch_puts_the_narration_on_its_scene_and_captions_it_with_its_own_words(stitch, fake_db, worded, monkeypatch):
     monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 8.0, "has_audio": True})
-    keys = []
-    monkeypatch.setattr(jobs, "caption_word_times", lambda ref, data, attempt, text, path, work, sid: keys.append((sid, attempt, path)) or [("w", 0.0, 0.5)])
+    timed = []
+    monkeypatch.setattr(jobs, "caption_word_times", lambda ref, data, attempt, text, path, work, sid: timed.append(sid) or [("w", 0.0, 0.5)])
     fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})
-    project, seen = stitch({"voice": {"id": "v1", "name": "Ana"}, "narration": {"0": {"at": 1.0, "trimEnd": 0.5}}})
+    project, seen = stitch({"voice": {"id": "v1", "name": "Ana"}, "narration": {"0": {"at": 1.0, "trimEnd": 0.5}},
+                            "captions": {"texts": {"0": "Something typed that the voice does not say"}}})
 
     assert project["status"] == "completed"
-    assert put == [([{"path": put[0][0][0]["path"], "at": 1.0, "start": 0.0, "end": 3.5}], False)]   # it fits: nothing carries on
+    assert worded == [([{"path": worded[0][0][0]["path"], "at": 1.0, "start": 0.0, "end": 3.5}], False)]   # it fits: nothing carries on
     assert seen["stitched"]["paths"][0].endswith("narrated_0.mp4")
     assert seen["revoiced"] == [("1", "v1")]                           # the narrated scene is not re-voiced
-    assert keys[0][1].startswith("narration:") and keys[0][2].endswith("narrated_0.mp4")
-    assert keys[1][1] == 1                                             # the other scene: its take
-    assert list(project["finalVideos"].values[-1]["narration"]) == ["0"]
+    assert timed == ["1"]                                              # only the other scene is sent for timing
+    # The voice's own words, one second later (where it was put), the last one cut with the voice.
+    assert seen["stitched"]["caption_words"][0] == [("This", 1.0, 1.5), ("watch", 1.5, 2.5), ("looks", 2.5, 3.5), ("expensive.", 3.5, 4.5)]
+    assert seen["stitched"]["caption_texts"][0] == "This watch looks expensive."   # not what was typed
+    version = project["finalVideos"].values[-1]
+    assert list(version["narration"]) == ["0"] and version["captionTiming"] == "exact"
+
+
+def test_a_voice_that_runs_on_takes_its_captions_with_it(stitch, fake_db, worded, monkeypatch):
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 2.0, "has_audio": True})
+    monkeypatch.setattr(jobs, "caption_word_times", lambda *a: [("Line", 0.2, 0.8), ("1.", 2.6, 3.0)])
+    fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})   # 4s on a 2s scene
+    project, seen = stitch({"edits": {"1": {"attempt": 1, "start": 0.5}}})
+    first, second = seen["stitched"]["caption_words"]
+    assert first == [("This", 0.0, 0.5), ("watch", 0.5, 1.5)]
+    # In scene 2, from where its kept part starts: the rest of the voice, then the scene's own words after it.
+    assert second == [("looks", 0.5, 1.0), ("expensive.", 1.0, 2.5), ("1.", 2.6, 3.0)]   # "Line" would have been said over it
+
+
+def test_the_rest_of_the_last_voice_is_captioned_over_the_end_card(stitch, fake_db, worded, monkeypatch):
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 3.0, "has_audio": True})
+    fake_db.collection("projects").document("p1").collection("scenes").document("1").update({"narration": MADE})
+    card = {"enabled": True, "imageRef": "users/u1/projects/p1/end_card_1.png", "seconds": 3}
+    project, seen = stitch({"endCard": card})
+    assert seen["stitched"]["caption_words"][1] == [("This", 0.0, 0.5), ("watch", 0.5, 1.5), ("looks", 1.5, 2.5)]
+    assert seen["stitched"]["end_card"]["caption_words"] == [("expensive.", 0.0, 1.0)]
+
+
+def test_with_captions_off_no_words_are_looked_up(stitch, fake_db, worded, monkeypatch):
+    monkeypatch.setattr(jobs, "probe_media", lambda path: {"duration": 8.0, "has_audio": True})
+    monkeypatch.setattr(jobs, "narration_word_times", lambda *a: pytest.fail("captions are off"))
+    fake_db.collection("projects").document("p1").collection("scenes").document("0").update({"narration": MADE})
+    project, seen = stitch({"captions": {"style": "none"}})
+    assert project["status"] == "completed"
+
+
+# --- the narration's words ------------------------------------------------------------------------------
+
+def test_words_follow_the_voice_where_it_was_put_and_trimmed():
+    told = {"seconds": 4.0, "at": 2.0, "trimStart": 0.5, "trimEnd": 1.0}       # heard from 2s to 4.5s
+    own, after = voiceover.narration_captions(WORDS, told, kept_end=8.0)
+    assert own == [("watch", 2.0, 3.0), ("looks", 3.0, 4.0), ("expensive.", 4.0, 4.5)]    # "This" is cut away with the start
+    assert after == []
+
+
+def test_words_said_after_the_scene_ends_belong_to_what_follows():
+    told = {"seconds": 4.0, "at": 0.0, "trimStart": 0.0, "trimEnd": 0.0}
+    own, after = voiceover.narration_captions(WORDS, told, kept_end=2.0, next_start=0.5)
+    assert [w[0] for w in own] == ["This", "watch"]                            # "looks" is half said: it goes on
+    assert after == [("looks", 0.5, 1.0), ("expensive.", 1.0, 2.5)]
+
+
+def test_word_times_are_found_once_and_kept(fake_db, monkeypatch):
+    ref = fake_db.collection("projects").document("p1").collection("scenes").document("0")
+    ref.set({"narration": {**MADE, "text": "This watch [pause 1] looks expensive."}})
+    asked = []
+    monkeypatch.setattr(elevenlabs, "align_words", lambda path, text: asked.append(text) or WORDS)
+    assert voiceover.narration_word_times(ref, ref.get().to_dict(), "n.mp3") == WORDS
+    assert asked == ["This watch looks expensive."]                            # without the pause marks
+    assert voiceover.narration_word_times(ref, ref.get().to_dict(), "n.mp3") == WORDS
+    assert len(asked) == 1                                                     # kept on the scene
+
+
+def test_when_the_words_cannot_be_timed_they_are_spread_over_the_voice(fake_db, monkeypatch):
+    ref = fake_db.collection("projects").document("p1").collection("scenes").document("0")
+    ref.set({"narration": MADE})
+
+    def broken(path, text):
+        raise elevenlabs.VoiceServiceError("busy")
+    monkeypatch.setattr(elevenlabs, "align_words", broken)
+    words = voiceover.narration_word_times(ref, ref.get().to_dict(), "n.mp3")
+    assert [w[0] for w in words] == ["Line", "0."] and words[0][1] == 0.0 and words[-1][2] == pytest.approx(4.0)
+    assert "words" not in ref.get().to_dict()["narration"]                     # nothing wrong is kept
 
 
 def test_a_narration_switched_off_leaves_the_scene_as_it_is(stitch, fake_db, monkeypatch):

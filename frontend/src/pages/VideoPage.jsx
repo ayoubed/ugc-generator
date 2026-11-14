@@ -45,6 +45,7 @@ import {
   stitchStartedMillis,
   takeCheck,
 } from '../utils/projectProgress';
+import { isNarrated, withoutPauses } from '../utils/narration';
 
 const SAVE_DELAY_MS = 800;
 
@@ -509,9 +510,21 @@ function ProjectVideo({ projectId: id }) {
                       <summary className="export-subhead">Caption text for each scene</summary>
                       <p className="field-hint">
                         Starts as each scene&apos;s script. Change it when the speaker says something else in the take you kept,
-                        or leave a scene empty to show no caption on it.
+                        or leave a scene empty to show no caption on it. A scene with a narration is captioned with
+                        what its voice says.
                       </p>
-                      {included.map(({ scene, label }) => (
+                      {included.map(({ scene, label }) => (isNarrated(project, scene) ? (
+                        // A narrated scene is captioned with what its voice says, when it says it.
+                        <div className="form-group cap-text" key={scene.id}>
+                          <div className="cap-text-head">
+                            <span className="label">Scene {label}</span>
+                          </div>
+                          <p className="field-hint">
+                            Follows this scene&apos;s narration: “{withoutPauses(scene.narration?.text)}”. Change the
+                            narration in the editor to change it.
+                          </p>
+                        </div>
+                      ) : (
                         <div className="form-group cap-text" key={scene.id}>
                           <div className="cap-text-head">
                             <label className="label" htmlFor={`video-caption-${scene.id}`}>Scene {label}</label>
@@ -538,7 +551,7 @@ function ProjectVideo({ projectId: id }) {
                             onUse={(said) => handleTextChange(scene.id, said)}
                           />
                         </div>
-                      ))}
+                      )))}
                     </details>
                   )}
                 </FinishCard>
@@ -568,14 +581,6 @@ function ProjectVideo({ projectId: id }) {
               scenes={included}
               fallbackSeconds={Number(project?.settings?.duration) || 8}
               disabled={stitching}
-              // One copy of the caption texts: the same ones the "Captions and cuts" card edits.
-              captions={{
-                textOf,
-                isOwn: (scene) => hasOwnCaptionText(project, scene) || scene.id in drafts,
-                change: handleTextChange,
-                commit: saveText,
-                reset: handleUseScript,
-              }}
             />
 
             <div className="gen-footer" role="region" aria-label="Stitch the final video">

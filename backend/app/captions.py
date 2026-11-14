@@ -93,8 +93,8 @@ CAPTION_BLOCK_MIN_SECONDS = 0.2
 
 def block_words(text: str, start: float, length: float) -> List[Word]:
     """
-    The words of a caption placed by hand, spread over the time it is shown (`start`, `length`
-    seconds) in proportion to how long each takes to say.
+    The words of a text spread over a stretch of time (`start`, `length` seconds) in proportion to
+    how long each takes to say. Used when the real word times could not be found.
     """
     words = split_words(text)
     length = max(CAPTION_BLOCK_MIN_SECONDS, float(length or 0))
@@ -108,16 +108,6 @@ def block_words(text: str, start: float, length: float) -> List[Word]:
         timed.append((word, round(clock, 3), round(clock + share, 3)))
         clock += share
     return timed
-
-
-def fit_block_to_clip(words: List[Word], trim_start: float, duration: float) -> List[Word]:
-    """Like fit_words_to_clip, for a caption placed by hand: its times are kept exactly as set."""
-    fitted: List[Word] = []
-    for text, start, end in words:
-        a, b = max(0.0, start - trim_start), min(duration, end - trim_start)
-        if b - a >= 0.03:
-            fitted.append((text, round(a, 3), round(b, 3)))
-    return fitted
 
 
 def fit_words_to_clip(words: List[Word], trim_start: float, duration: float) -> List[Word]:

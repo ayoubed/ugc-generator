@@ -40,12 +40,13 @@ beforeEach(() => {
 });
 
 describe('the timeline', () => {
-  it('has a track each for the picture, the voices, the captions and the music', () => {
+  it('has a track each for the picture, the voices and the music, and none for captions', () => {
     show({ settings: { music: MUSIC } });
     expect(screen.getByRole('heading', { name: 'Editor' })).toBeTruthy();
     expect(track('Video track').getAllByRole('button').length).toBe(2);
     expect(track('Voice track').getAllByRole('button', { hidden: true }).length).toBe(2);
-    expect(track('Captions track').getByText('Line 0.')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Captions track' })).toBeNull();     // captions follow the voice by themselves
+    expect(screen.queryByRole('button', { name: 'Add caption' })).toBeNull();
     expect(screen.getByTestId('editor-end').textContent).toBe('0:10.0');
     expect(track('Music track').getByRole('button', { name: 'Music: Calm piano, volume 40%' })).toBeTruthy();
   });
@@ -62,14 +63,6 @@ describe('the timeline', () => {
     expect(track('Video track').getAllByRole('button').length).toBe(1);
     const { container } = render(<EditorCard project={{ id: 'p2', settings: {} }} scenes={list(scene('0', { videoUrl: '' }))} />);
     expect(container.innerHTML).toBe('');
-  });
-
-  it('has no captions track when captions are off, and says when a scene has no caption', () => {
-    const { unmount } = show({ settings: { captions: { style: 'none' } } });
-    expect(screen.queryByRole('group', { name: 'Captions track' })).toBeNull();
-    unmount();
-    show({ settings: { captions: { texts: { 1: '' } } } });
-    expect(track('Captions track').getByText('No caption')).toBeTruthy();
   });
 
   it('says where to add music when there is none', () => {
@@ -344,54 +337,6 @@ describe('the editor while a stitch runs, and when saving fails', () => {
     await userEvent.click(clip(1));
     fireEvent.change(screen.getByLabelText('End'), { target: { value: '3' } });
     expect(await screen.findByRole('alert', {}, { timeout: 2000 })).toBeTruthy();
-  });
-});
-
-describe('captions on the timeline', () => {
-  const caption = (number) => track('Captions track').getByRole('button', { name: new RegExp(`^Caption of scene ${number}:`) });
-
-  it('opens a scene\'s caption text and saves a change', async () => {
-    show();
-    await userEvent.click(caption(2));
-    expect(screen.getByRole('heading', { name: 'Caption of scene 2' })).toBeTruthy();
-    const field = screen.getByLabelText('Caption text');
-    expect(field.value).toBe('Line 1.');
-    fireEvent.change(field, { target: { value: 'One pump, every night.' } });
-    expect(track('Captions track').getByText('One pump, every night.')).toBeTruthy();
-    fireEvent.blur(field);
-    expect(saved()).toEqual(['p1', { 'captions.texts.1': 'One pump, every night.', 'captions.textFor.1': 'Line 1.' }]);
-  });
-
-  it('goes back to the script when the script changed after the caption was typed', async () => {
-    show({ settings: { captions: { texts: { 0: 'Typed for the old script.' }, textFor: { 0: 'The old script.' } } } });
-    expect(track('Captions track').queryByText('Typed for the old script.')).toBeNull();
-    await userEvent.click(caption(1));
-    expect(screen.getByLabelText('Caption text').value).toBe('Line 0.');
-    expect(screen.queryByRole('button', { name: 'Use the script again' })).toBeNull();
-  });
-
-  it('can empty a caption, and go back to the script', async () => {
-    show({ settings: { captions: { texts: { 0: 'My own words.' } } } });
-    await userEvent.click(caption(1));
-    fireEvent.change(screen.getByLabelText('Caption text'), { target: { value: '' } });
-    expect(track('Captions track').getByText('No caption')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Use the script again' }));
-    expect(saved()).toEqual(['p1', { 'captions.texts.0': 'DELETE', 'captions.textFor.0': 'DELETE' }]);
-  });
-
-  it('uses the page\'s caption texts when the page keeps them', async () => {
-    const page = { textOf: (s) => `page text ${s.id}`, isOwn: () => true, change: vi.fn(), commit: vi.fn(), reset: vi.fn() };
-    show({ captions: page });
-    await userEvent.click(caption(1));
-    const field = screen.getByLabelText('Caption text');
-    expect(field.value).toBe('page text 0');
-    fireEvent.change(field, { target: { value: 'New' } });
-    fireEvent.blur(field);
-    await userEvent.click(screen.getByRole('button', { name: 'Use the script again' }));
-    expect(page.change).toHaveBeenCalledWith('0', 'New');
-    expect(page.commit).toHaveBeenCalledWith('0');
-    expect(page.reset).toHaveBeenCalledWith('0');
-    expect(updateProjectSettings).not.toHaveBeenCalled();
   });
 });
 
@@ -932,124 +877,6 @@ describe('narration: a voice made from text', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Make the voice again' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(/busy/);
     expect(updateProjectSettings).not.toHaveBeenCalled();
-  });
-});
-
-describe('captions placed by hand', () => {
-  const placed = (blocks, extra = {}) => ({ captions: { manual: { 0: true }, blocks, ...extra } });
-  const BLOCK = { sceneId: '0', at: 1, length: 1.5, text: 'By hand' };
-  const caption = (text) => track('Captions track').getByRole('button', { name: new RegExp(`^Caption in scene 1: ${text},`) });
-  const savedKeys = () => Object.keys(saved()[1]).map((key) => key.replace(/blocks\.c[a-z0-9]+$/, 'blocks.*')).sort();
-
-  it('cuts a scene\'s caption into short captions that can be moved', async () => {
-    show({ scenes: list(scene('0', { script: 'This watch looks far more expensive than it is.' }), scene('1')) });
-    await userEvent.click(track('Captions track').getByRole('button', { name: /^Caption of scene 1:/ }));
-    await userEvent.click(screen.getByRole('button', { name: "Place this scene's captions by hand" }));
-    const made = track('Captions track').getAllByRole('button', { name: /^Caption in scene 1:/ });
-    expect(made.map((b) => b.textContent)).toEqual(['This watch looks far', 'more expensive than it', 'is.']);
-    expect(left(made[0].parentElement)).toBe('0px');
-    expect(savedKeys()).toEqual(['captions.blocks.*', 'captions.blocks.*', 'captions.blocks.*', 'captions.manual.0']);
-    expect(saved()[1]['captions.manual.0']).toBe(true);
-    expect(screen.getByRole('heading', { name: 'Caption in scene 1' })).toBeTruthy();      // the first one is open
-    expect(track('Captions track').getByRole('button', { name: /^Caption of scene 2:/ })).toBeTruthy();   // scene 2 stays automatic
-  });
-
-  it('shows a caption where it was placed, as long as it lasts', () => {
-    show({ settings: placed({ a: BLOCK }) });
-    expect([left(caption('By hand').parentElement), width(caption('By hand').parentElement)]).toEqual([`${1 * PPS}px`, `${1.5 * PPS}px`]);
-    expect(track('Captions track').queryByRole('button', { name: /^Caption of scene 1:/ })).toBeNull();
-  });
-
-  it('rewords, moves and trims a caption from its panel', async () => {
-    show({ settings: placed({ a: BLOCK }) });
-    await userEvent.click(caption('By hand'));
-    fireEvent.change(screen.getByLabelText('Caption text'), { target: { value: 'New words' } });
-    expect(caption('New words')).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Starts at'), { target: { value: '2' } });
-    fireEvent.change(screen.getByLabelText('Shown for'), { target: { value: '0.5' } });
-    expect([left(caption('New words').parentElement), width(caption('New words').parentElement)]).toEqual([`${2 * PPS}px`, `${0.5 * PPS}px`]);
-    await waitFor(() => expect(saved()).toEqual(['p1', { 'captions.blocks.a': { sceneId: '0', at: 2, length: 0.5, text: 'New words' } }]), { timeout: 2000 });
-  });
-
-  it('moves a caption when it is dragged, and saves it when let go', async () => {
-    show({ settings: placed({ a: BLOCK }) });
-    fireEvent.pointerDown(caption('By hand'), { clientX: 100, pointerId: 1 });
-    fireEvent.pointerMove(caption('By hand'), { clientX: 100 + 2 * PPS, pointerId: 1 });
-    expect(left(caption('By hand').parentElement)).toBe(`${3 * PPS}px`);
-    expect(updateProjectSettings).not.toHaveBeenCalled();
-    fireEvent.pointerUp(caption('By hand'), { pointerId: 1 });
-    await waitFor(() => expect(saved()).toEqual(['p1', { 'captions.blocks.a': { ...BLOCK, at: 3 } }]));
-  });
-
-  it('keeps a caption inside its scene', () => {
-    show({ settings: placed({ a: BLOCK }) });
-    fireEvent.pointerDown(caption('By hand'), { clientX: 100, pointerId: 1 });
-    fireEvent.pointerMove(caption('By hand'), { clientX: 100 + 30 * PPS, pointerId: 1 });
-    expect(left(caption('By hand').parentElement)).toBe(`${4.8 * PPS}px`);      // the scene is 5s long
-  });
-
-  it('is trimmed by dragging its right edge', async () => {
-    show({ settings: placed({ a: BLOCK }) });
-    const edge = screen.getByTestId('caption-end-a');
-    fireEvent.pointerDown(edge, { clientX: 200, pointerId: 1 });
-    fireEvent.pointerMove(edge, { clientX: 200 - 1 * PPS, pointerId: 1 });
-    expect(width(caption('By hand').parentElement)).toBe(`${0.5 * PPS}px`);
-    fireEvent.pointerUp(edge, { pointerId: 1 });
-    await waitFor(() => expect(saved()).toEqual(['p1', { 'captions.blocks.a': { ...BLOCK, length: 0.5 } }]));
-  });
-
-  it('removes a caption', async () => {
-    show({ settings: placed({ a: BLOCK, b: { ...BLOCK, at: 3, text: 'Second' } }) });
-    await userEvent.click(caption('By hand'));
-    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    expect(saved()).toEqual(['p1', { 'captions.blocks.a': 'DELETE' }]);
-    expect(track('Captions track').queryByRole('button', { name: /By hand/ })).toBeNull();
-    expect(caption('Second')).toBeTruthy();
-  });
-
-  it('says so when a scene placed by hand has no caption left', () => {
-    show({ settings: placed({}) });
-    expect(track('Captions track').getByText(/No caption\. “Add caption” puts one at the playhead\./)).toBeTruthy();
-  });
-
-  it('adds a caption at the playhead', async () => {
-    show({ settings: placed({ a: BLOCK }) });
-    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 3 * PPS, pointerId: 1 });     // 3s into scene 1
-    fireEvent.pointerUp(screen.getByTestId('editor-ruler'), { pointerId: 1 });
-    await userEvent.click(screen.getByRole('button', { name: 'Add caption' }));
-    expect(left(caption('New caption').parentElement)).toBe(`${3 * PPS}px`);
-    expect(screen.getByLabelText('Caption text').value).toBe('New caption');
-    expect(Object.values(saved()[1])).toEqual([{ sceneId: '0', at: 3, length: 1.5, text: 'New caption' }]);
-  });
-
-  it('adding to a scene with an automatic caption keeps that caption, cut into captions', async () => {
-    show();
-    await userEvent.click(screen.getByRole('button', { name: 'Add caption' }));
-    const made = track('Captions track').getAllByRole('button', { name: /^Caption in scene 1:/ });
-    expect(made.map((b) => b.textContent).sort()).toEqual(['Line 0.', 'New caption']);
-    expect(saved()[1]['captions.manual.0']).toBe(true);
-  });
-
-  it('goes back to the automatic caption', async () => {
-    show({ settings: placed({ a: BLOCK }) });
-    await userEvent.click(caption('By hand'));
-    await userEvent.click(screen.getByRole('button', { name: 'Back to the automatic caption for this scene' }));
-    expect(saved()).toEqual(['p1', { 'captions.manual.0': 'DELETE', 'captions.blocks.a': 'DELETE' }]);
-    expect(track('Captions track').getByRole('button', { name: /^Caption of scene 1: Line 0\./ })).toBeTruthy();
-  });
-
-  it('spreads the captions over the narration when the scene has one', async () => {
-    const narration = { text: 'Line 0.', storageRef: 'n.mp3', url: 'https://files.test/n.mp3', seconds: 2 };
-    show({ settings: { narration: { 0: { at: 2 } } }, scenes: list(scene('0', { narration }), scene('1')) });
-    await userEvent.click(track('Captions track').getByRole('button', { name: /^Caption of scene 1:/ }));
-    await userEvent.click(screen.getByRole('button', { name: "Place this scene's captions by hand" }));
-    const made = caption('Line 0\\.');
-    expect([left(made.parentElement), width(made.parentElement)]).toEqual([`${2 * PPS}px`, `${2 * PPS}px`]);
-  });
-
-  it('has no Add caption button when captions are off', () => {
-    show({ settings: { captions: { style: 'none' } } });
-    expect(screen.queryByRole('button', { name: 'Add caption' })).toBeNull();
   });
 });
 
