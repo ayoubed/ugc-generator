@@ -90,7 +90,13 @@ Cloud Run) to switch on two things at stitch time:
 - **Exact caption timing.** Each caption word is placed where it is spoken (forced alignment)
   instead of being estimated. The word times are kept on the scene.
 
-Without the key the app behaves as before: no Voice card, estimated caption timing. Code:
+- **Sound effects in the editor.** "Add sound" makes a sound from a short description and puts it
+  at the playhead; it is dragged along the Sounds track and mixed in when stitching. A sound is
+  pinned to a moment of a scene's clip (`settings.sounds.<id> = {sceneId, at, volume, ...}`), so it
+  stays on the same frame when other scenes are trimmed. Code: `backend/app/routes/sounds.py`,
+  `pipeline.place_sounds`, `frontend/src/utils/sounds.js`.
+
+Without the key the app behaves as before: no Voice card, no sound effects, estimated caption timing. Code:
 `backend/app/elevenlabs.py` (the client) and `backend/app/voiceover.py` (what the stitch does).
 
 ## Deploy

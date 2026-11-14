@@ -5,6 +5,8 @@ ElevenLabs, used for two things when a video is stitched:
   (voice changer), because separately generated scenes can sound like different people;
 - exact caption timing: the known script is aligned to the audio word by word (forced alignment).
 
+It also makes the music (on a paid plan) and the editor's sound effects from a description.
+
 Everything is optional. Without ELEVENLABS_API_KEY the app works as before: scenes keep their own
 voices and caption timing is estimated.
 """
@@ -57,6 +59,8 @@ def _message_for(status_code: int, doing: str) -> str:
         return "The voice service had a problem. Try again in a moment."
     if doing == "Making the music":
         return "The music service did not accept this description. Reword it and try again."
+    if doing == "Making the sound":
+        return "The sound service did not accept this description. Reword it and try again."
     return f"{doing} was not accepted by the voice service. Try again, or pick another voice."
 
 
@@ -138,6 +142,27 @@ def compose_music(prompt: str, output_path: str, seconds: float) -> str:
     )
     if not response.content:
         raise VoiceServiceError("The music service returned no audio. Try a different description.")
+    with open(output_path, "wb") as out:
+        out.write(response.content)
+    return output_path
+
+
+SOUND_MIN_SECONDS, SOUND_MAX_SECONDS = 0.5, 10.0
+
+
+def make_sound(prompt: str, output_path: str, seconds: Optional[float] = None) -> str:
+    """
+    A sound effect made from a description ("soft whoosh", "cash register"), written as an MP3.
+    `seconds` (0.5 to 10) sets its length; without it the service picks a length that suits the sound.
+    """
+    body: Dict[str, Any] = {"text": prompt, "prompt_influence": 0.5}
+    if seconds is not None:
+        body["duration_seconds"] = round(max(SOUND_MIN_SECONDS, min(SOUND_MAX_SECONDS, float(seconds))), 1)
+    response = _request(
+        "POST", "/v1/sound-generation", "Making the sound", params={"output_format": "mp3_44100_128"}, json=body,
+    )
+    if not response.content:
+        raise VoiceServiceError("The sound service returned no audio. Try a different description.")
     with open(output_path, "wb") as out:
         out.write(response.content)
     return output_path

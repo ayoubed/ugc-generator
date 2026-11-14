@@ -1,4 +1,5 @@
 import { currentEdits, sameEdits } from './edits';
+import { sameSounds } from './sounds';
 // Shared helpers that describe where a project is in the journey (scenes, takes, final videos).
 import { projectSceneAudio } from '../data/guidelineTags';
 import { sameAssetBible } from './assetBible';
@@ -450,6 +451,9 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
     // Same for the editor: only versions that recorded their edits can be compared.
     if ('edits' in finalVideo && !sameEdits(finalVideo.edits, currentEdits(project, scenes))) {
       return 'The edit (kept parts or volumes) changed since this version was stitched.';
+    }
+    if ('sounds' in finalVideo && !sameSounds(finalVideo.sounds, project)) {
+      return 'The sound effects changed since this version was stitched.';
     }
     // Versions stitched before the voice choice existed have no voice field, so they aren't flagged.
     if ('voice' in finalVideo && (finalVideo.voice?.id || '') !== (projectVoice(project)?.id || '')) {

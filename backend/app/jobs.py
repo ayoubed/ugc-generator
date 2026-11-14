@@ -26,6 +26,7 @@ from app.pipeline import (
     SCENE_AUDIO_MODES,
     SCENE_AUDIO_VOICE_ONLY,
     MUSIC_VOLUMES,
+    SOUND_DEFAULT_PERCENT,
     scene_speech_rule,
     PRODUCT_LED_SCENE_RULE,
     VIDEO_TYPE_PRODUCT,
@@ -321,6 +322,35 @@ def scene_edits(project_data: Optional[Dict[str, Any]], scenes_list: List[tuple]
         if edit.get("muted"):
             kept["muted"] = True
         result.append({"attempt": edit.get("attempt"), **kept} if kept else None)
+    return result
+
+
+SOUND_END_CARD = "end"   # a sound pinned to the end card instead of a scene
+
+
+def project_sounds(project_data: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    The sound effects placed in the editor (settings.sounds.<id>), cleaned: each has the file, the
+    scene it is pinned to (or "end" for the end card), the moment in that scene's clip, and its
+    volume from 0 to 100. Entries without a file or a place are dropped.
+    """
+    saved = ((project_data or {}).get("settings") or {}).get("sounds")
+    result: Dict[str, Dict[str, Any]] = {}
+    for sound_id, sound in (saved.items() if isinstance(saved, dict) else []):
+        if not isinstance(sound, dict) or not sound.get("storageRef") or not sound.get("sceneId"):
+            continue
+        at, volume = sound.get("at"), sound.get("volume")
+        if isinstance(at, bool) or not isinstance(at, (int, float)) or at < 0:
+            continue
+        if isinstance(volume, bool) or not isinstance(volume, (int, float)):
+            volume = SOUND_DEFAULT_PERCENT
+        result[str(sound_id)] = {
+            "storageRef": str(sound["storageRef"]),
+            "sceneId": str(sound["sceneId"]),
+            "at": round(float(at), 3),
+            "volume": int(round(max(0, min(100, volume)))),
+            "name": str(sound.get("name") or "Sound")[:80],
+        }
     return result
 
 
@@ -1051,6 +1081,24 @@ def _run_stitch_job_sync(
         )
 
         edits = scene_edits(project_data, scenes_list)
+        # Sound effects from the editor, each pinned to a moment of a scene (or of the end card).
+        sounds = project_sounds(project_data)
+        positions = {doc_id: position for position, (_, doc_id, _) in enumerate(scenes_list)}
+        stitch_sounds: List[Dict[str, Any]] = []
+        for sound_id, sound in sorted(sounds.items()):
+            on_card = sound["sceneId"] == SOUND_END_CARD
+            if not on_card and sound["sceneId"] not in positions:
+                continue   # its scene is skipped or gone
+            _assert_owned_path(uid, sound["storageRef"], "sound effect")
+            sound_local = os.path.join(temp_dir, f"sound_{len(stitch_sounds)}" + (os.path.splitext(sound["storageRef"])[1] or ".mp3"))
+            try:
+                download_file(sound["storageRef"], sound_local)
+            except Exception as e:
+                raise ValueError(f"Could not load the sound effect \"{sound['name']}\". Remove it in the editor and add it again.") from e
+            stitch_sounds.append({
+                "path": sound_local, "clip": SOUND_END_CARD if on_card else positions[sound["sceneId"]],
+                "at": sound["at"], "volume": sound["volume"],
+            })
         stitch_report: Dict[str, Any] = {}
         stitch_videos(
             local_video_paths,
@@ -1065,6 +1113,7 @@ def _run_stitch_job_sync(
             caption_words=caption_words,
             edits=edits,
             report=stitch_report,
+            sounds=stitch_sounds,
         )
 
         # 3. Every stitch is a new version, so earlier final videos stay available.
@@ -1106,6 +1155,8 @@ def _run_stitch_job_sync(
             "voice": voice,
             # The editor's trims, mutes and volumes this version was cut with, per scene id.
             "edits": {doc_id: edit for (_, doc_id, _), edit in zip(scenes_list, edits) if edit},
+            # The sound effects as they were placed, so moving or changing one marks the version as outdated.
+            "sounds": {sound_id: {k: sound[k] for k in ("storageRef", "sceneId", "at", "volume")} for sound_id, sound in sounds.items()},
             # The part of each scene that ended up in the video (automatic cut or edit), for the timeline.
             "cuts": {
                 doc_id: {**cut, "attempt": data.get("activeAttempt")}

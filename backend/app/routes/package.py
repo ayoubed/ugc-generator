@@ -20,8 +20,11 @@ from app.auth import get_current_user
 from app.captions import caption_style
 from app.errors import user_message
 from app.interchange import build_readme, build_srt, build_xmeml, caption_cues, kept_range, slug
-from app.jobs import _assert_owned_path, is_scene_skipped, ordered_scenes, project_music, scene_edits, spawn_background
-from app.pipeline import probe_media
+from app.jobs import (
+    SOUND_END_CARD, _assert_owned_path, is_scene_skipped, ordered_scenes, project_music, project_sounds, scene_edits,
+    spawn_background,
+)
+from app.pipeline import place_sounds, probe_media
 from app.storage import download_file, get_download_url, set_download_name, upload_file
 from app.voiceover import saved_alignment
 
@@ -105,14 +108,33 @@ def _run_package_job_sync(uid: str, project_id: str) -> None:
             seconds = card.get("seconds") if isinstance(card.get("seconds"), (int, float)) else 2.5
             card_entry = {"file": f"media/{file_name}", "seconds": float(seconds)}
 
+        # Sound effects, placed the way the stitch places them.
+        sound_entries: List[Dict[str, Any]] = []
+        cut_clips = [{"trim_start": clip["start"], "duration": clip["end"] - clip["start"]} for clip in clips]
+        if card_entry:
+            cut_clips.append({"trim_start": 0.0, "duration": card_entry["seconds"]})
+        positions = {doc_id: position for position, (_, doc_id, _) in enumerate(scenes)}
+        wanted = [
+            {**sound, "clip": SOUND_END_CARD if sound["sceneId"] == SOUND_END_CARD else positions.get(sound["sceneId"])}
+            for _, sound in sorted(project_sounds(project_data).items())
+        ]
+        for number, sound in enumerate(place_sounds(cut_clips, wanted, bool(card_entry)), start=1):
+            _assert_owned_path(uid, sound["storageRef"], "sound effect")
+            file_name = f"sound_{number:02d}" + (os.path.splitext(sound["storageRef"])[1].lower() or ".mp3")
+            download_file(sound["storageRef"], os.path.join(media_dir, file_name))
+            sound_entries.append({
+                "name": sound["name"], "file": f"media/{file_name}", "time": sound["time"],
+                "duration": float(probe_media(os.path.join(media_dir, file_name))["duration"]),
+            })
+
         cues = caption_cues(clips)
         files = {
             "timeline.xml": build_xmeml({
                 "name": name, "fps": size.get("fps") or 24, "width": size.get("width") or 720, "height": size.get("height") or 1280,
-                "clips": clips, "end_card": card_entry, "music": music_entry,
+                "clips": clips, "end_card": card_entry, "music": music_entry, "sounds": sound_entries,
             }),
             "captions.srt": build_srt(cues),
-            "README.txt": build_readme(name, bool(cues), bool(music_entry), bool(card_entry)),
+            "README.txt": build_readme(name, bool(cues), bool(music_entry), bool(card_entry), bool(sound_entries)),
         }
         zip_path = os.path.join(temp_dir, f"{folder}.zip")
         # Stored, not compressed: video and audio are compressed already.

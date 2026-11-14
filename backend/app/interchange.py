@@ -115,9 +115,11 @@ def build_xmeml(timeline: Dict[str, Any]) -> str:
                  "start", "end" (kept part), "has_audio", "muted"}],
       "end_card": {"file", "seconds"} or None,
       "music": {"file", "duration"} or None,
+      "sounds": [{"name", "file", "duration", "time" (seconds into the video)}] (optional),
     }
     Video is one track. Each scene's sound is on audio tracks 1 and 2 (left and right), the music
-    on 3 and 4, cut to the video's length. A muted scene has no audio clip.
+    on 3 and 4, cut to the video's length. A muted scene has no audio clip. Sound effects come after
+    the music, on as few track pairs as it takes for none to overlap.
     """
     timebase = max(1, int(round(float(timeline.get("fps") or 24))))
 
@@ -215,6 +217,26 @@ def build_xmeml(timeline: Dict[str, Any]) -> str:
             _text(source, "mediatype", "audio")
             _text(source, "trackindex", channel)
 
+    # Sound effects: each pair of tracks holds the sounds that do not overlap on it.
+    lanes: List[Dict[str, Any]] = []
+    for number, sound in enumerate(sorted(timeline.get("sounds") or [], key=lambda item: float(item["time"])), start=1):
+        at = frames(float(sound["time"]))
+        whole = max(1, frames(float(sound.get("duration") or 0)))
+        length = min(whole, cursor - at)
+        if length <= 0:
+            continue
+        lane = next((lane for lane in lanes if lane["free_at"] <= at), None)
+        if lane is None:
+            lane = {"tracks": [ET.SubElement(audio, "track"), ET.SubElement(audio, "track")], "free_at": 0}
+            lanes.append(lane)
+        lane["free_at"] = at + length
+        for channel, track in enumerate(lane["tracks"], start=1):
+            item = clip_item(track, f"clipitem-sound{number}-{channel}", sound.get("name") or "Sound", at, length, 0, whole)
+            file_element(item, f"file-sound{number}", sound["file"], float(sound.get("duration") or 0), False, True, declared)
+            source = ET.SubElement(item, "sourcetrack")
+            _text(source, "mediatype", "audio")
+            _text(source, "trackindex", channel)
+
     duration_element.text = str(cursor)
     ET.indent(root, space="  ")
     return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n' + ET.tostring(root, encoding="unicode") + "\n"
@@ -235,7 +257,8 @@ Opening it
 
 What carries over
   The order of the scenes and the part kept of each one, the scenes' own sound on audio tracks 1
-  and 2 (a muted scene has none), the music on tracks 3 and 4, and the end card as a still.
+  and 2 (a muted scene has none), the music on tracks 3 and 4, the sound effects on the tracks
+  after it, and the end card as a still.
 
 What does not
   Volume levels, the way the music dips under the voice, the burned-in caption style, and a voice
@@ -244,6 +267,9 @@ What does not
 """
 
 
-def build_readme(name: str, has_captions: bool, has_music: bool, has_card: bool) -> str:
-    extras = "".join([", the music" if has_music else "", ", the end card picture" if has_card else ""])
+def build_readme(name: str, has_captions: bool, has_music: bool, has_card: bool, has_sounds: bool = False) -> str:
+    extras = "".join([
+        ", the music" if has_music else "", ", the sound effects" if has_sounds else "",
+        ", the end card picture" if has_card else "",
+    ])
     return README.format(name=name, no_captions="" if has_captions else " (empty: captions are off)", extras=extras)

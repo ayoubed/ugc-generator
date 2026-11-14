@@ -2,12 +2,16 @@ import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { deleteField } from 'firebase/firestore';
 import LoadingSpinner from './LoadingSpinner';
 import { updateProjectSettings } from '../hooks/useProject';
-import { exportPackage, previewVoice } from '../services/api';
+import { useVoices } from '../hooks/useVoices';
+import { exportPackage, makeSound, previewVoice } from '../services/api';
 import { friendlyError } from '../utils/errors';
 import {
   MAX_SCENE_VOLUME, changeEdit, editSummary, keptRange, musicVolumePercent, previewGain, previewMusicGain, sceneEdit,
 } from '../utils/edits';
 import { END_CARD_SECONDS, hasOwnCaptionText, projectCaptionStyle, projectEndCard, projectMusic, projectVoice, sceneCaptionText, toMillis } from '../utils/projectProgress';
+import {
+  MAX_SOUNDS, SOUND_DEFAULT_VOLUME, SOUND_IDEAS, previewSoundGain, projectSounds, soundPlace, soundTime,
+} from '../utils/sounds';
 import { revoicedUrl, voicePreviewState } from '../utils/voicePreview';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
 
@@ -15,8 +19,11 @@ const SAVE_DELAY_MS = 500;
 
 /**
  * Video step: the editor. A timeline with one track each for the picture, the scenes' voices,
- * the captions and the music, a playhead, and a preview that plays the cut as edited (with the
- * music) without stitching.
+ * the captions, the sound effects and the music, a playhead, and a preview that plays the cut as
+ * edited (with the music and the sound effects) without stitching.
+ *
+ * "Add sound" makes a sound effect from a description and puts it at the playhead; it is then
+ * moved by dragging it along its track, and its volume is set in the panel.
  *
  * A clip on the picture track is trimmed by dragging its edges, or with the Start and End fields
  * of the panel that opens when it is selected (the same thing, for the keyboard). The panel also
@@ -32,11 +39,14 @@ const SAVE_DELAY_MS = 500;
  * @param {boolean} disabled
  * @param {object}  captions  optional: { textOf(scene), isOwn(scene), change(id, text), commit(id), reset(id) }
  *                            when the page keeps the caption texts itself; otherwise they are saved here
+ * Sound effects are offered when the voice service is set up (the same service makes them).
  */
 const STALE_PACKAGE_MS = 10 * 60 * 1000; // same limit the API uses
 const VOICE_DRIFT_SECONDS = 0.25;         // more than this between lips and voice is noticeable
 const RESYNC_PAUSE_MS = 2000;
 const PLAYHEAD_REDRAW_MS = 80;
+const SOUND_LENGTHS = [1, 2, 3, 5];       // seconds offered for a new sound, besides "automatic"
+const MIN_SOUND_WIDTH = 30;               // pixels: a very short sound can still be grabbed
 
 export default function EditorCard({ project, scenes, fallbackSeconds = 8, disabled = false, captions = null }) {
   const baseId = useId();
@@ -61,6 +71,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const [captionDrafts, setCaptionDrafts] = useState({});
   const [cardDraft, setCardDraft] = useState({});
   const [exporting, setExporting] = useState(false);
+  // Sound effects: one player each, which of them already started in this run of the preview,
+  // and the ones changed here and not yet back from the server (null = removed).
+  const soundPlayers = useRef({});
+  const started = useRef(new Set());
+  const soundDrag = useRef(null);
+  const [soundDrafts, setSoundDrafts] = useState({});
+  const [soundPrompt, setSoundPrompt] = useState('');
+  const [soundSeconds, setSoundSeconds] = useState(0);   // 0 = the service picks the length
+  const [makingSound, setMakingSound] = useState(false);
+  const { available: soundsOffered } = useVoices();
   const scrubbing = useRef(false);
   const canvas = useRef(null);
   const [selected, setSelected] = useState(null); // { type: 'clip' | 'caption', id } | { type: 'music' | 'card' } | null
@@ -87,6 +107,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const pps = scale || fitScale(viewWidth, timeline.total);
   const place = locate(timeline, time);
   const current = place ? timeline.clips[place.index] : null;
+
+  // The sounds as they are now, each with where it starts on the timeline (null = not heard).
+  const savedSounds = projectSounds(project);
+  const sounds = [
+    ...savedSounds.filter((sound) => !(sound.id in soundDrafts)),
+    ...Object.values(soundDrafts).filter(Boolean),
+  ].sort((a, b) => a.id.localeCompare(b.id)).map((sound) => ({ ...sound, time: soundTime(timeline, sound) }));
+  const heardSounds = sounds.filter((sound) => sound.time !== null);
+  const lostSounds = sounds.filter((sound) => sound.time === null);
 
   // The timeline fits the card's width until the zoom is used, also after the window is resized.
   useEffect(() => {
@@ -134,6 +163,83 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const changeMusicVolume = (percent) => {
     setMusicDraft(percent);
     saveSoon('music.volume', percent);
+  };
+
+  // ── Sound effects ───────────────────────────────────────────────────────────────────────────
+  const stored = ({ time: _time, ...sound }) => sound;
+  const changeSound = (sound, changes, { later = true } = {}) => {
+    const next = { ...stored(sound), ...changes };
+    setSoundDrafts((prev) => ({ ...prev, [sound.id]: next }));
+    if (later) saveSoon(`sounds.${sound.id}`, next);
+    else {
+      pending.current[`sounds.${sound.id}`] = next;
+      flush(`sounds.${sound.id}`);
+    }
+  };
+  const moveSound = (sound, seconds, options) => {
+    const spot = soundPlace(timeline, seconds);
+    if (spot) changeSound(sound, spot, options);
+  };
+  const removeSound = (sound) => {
+    soundPlayers.current[sound.id]?.pause?.();
+    setSoundDrafts((prev) => ({ ...prev, [sound.id]: null }));
+    pending.current[`sounds.${sound.id}`] = deleteField();
+    flush(`sounds.${sound.id}`);
+    setSelected(null);
+  };
+  const hearSound = (sound) => {
+    const element = soundPlayers.current[sound.id];
+    if (!element) return;
+    element.volume = previewSoundGain(sound.volume);
+    element.currentTime = 0;
+    element.play?.()?.catch?.(() => {});
+  };
+  const handleMakeSound = async () => {
+    const prompt = soundPrompt.trim();
+    if (prompt.length < 2 || makingSound) return;
+    setError('');
+    setMakingSound(true);
+    try {
+      const made = await makeSound(project.id, { prompt, seconds: soundSeconds || null });
+      const spot = soundPlace(timeline, time);
+      if (!spot) return;
+      changeSound({ ...made, volume: SOUND_DEFAULT_VOLUME }, spot, { later: false });
+      setSelected({ type: 'sound', id: made.id });
+      setSoundPrompt('');
+    } catch (err) {
+      console.error('Could not make the sound:', err);
+      setError(friendlyError(err));
+    } finally {
+      setMakingSound(false);
+    }
+  };
+  // Dragging a sound along its track moves it; it is saved when the pointer is let go.
+  const startSoundDrag = (event, sound) => {
+    if (disabled) return;
+    soundDrag.current = { id: sound.id, x: event.clientX, time: sound.time, moved: false };
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // without capture the drag still works while the pointer is over the sound
+    }
+    setSelected({ type: 'sound', id: sound.id });
+  };
+  const moveSoundDrag = (event, sound) => {
+    const held = soundDrag.current;
+    if (!held || held.id !== sound.id || !Number.isFinite(event.clientX)) return;
+    const shift = (event.clientX - held.x) / pps;
+    if (!held.moved && Math.abs(event.clientX - held.x) < 3) return;   // a click, not a drag
+    held.moved = true;
+    const spot = soundPlace(timeline, held.time + shift);
+    if (spot) setSoundDrafts((prev) => ({ ...prev, [sound.id]: { ...stored(sound), ...spot } }));
+  };
+  const endSoundDrag = (sound) => {
+    const held = soundDrag.current;
+    soundDrag.current = null;
+    if (held?.moved && held.id === sound.id) {
+      pending.current[`sounds.${sound.id}`] = stored(sound);
+      flush(`sounds.${sound.id}`);
+    }
   };
 
   // Caption texts: kept by the page when it passes `captions`, otherwise saved from here.
@@ -212,10 +318,15 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       if (playing) voiceOver.play?.()?.catch?.(() => {});
     }
   };
+  const quietSounds = () => {
+    started.current = new Set();
+    Object.values(soundPlayers.current).forEach((element) => element?.pause?.());
+  };
   const goTo = (seconds) => {
     const target = Math.max(0, Math.min(seconds, timeline.clipsEnd));
     const spot = locate(timeline, target);
     if (!spot) return;
+    quietSounds();
     seek.current = { clipTime: spot.clipTime, token: seek.current.token + 1 };
     setTime(target);
     if (spot.index === place?.index) applySeek();
@@ -227,6 +338,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     Object.values(videos.current).forEach((element) => element?.pause?.());
     Object.values(dubs.current).forEach((element) => element?.pause?.());
     audio.current?.pause?.();
+    quietSounds();
   };
   const play = () => {
     if (!current) return;
@@ -330,11 +442,22 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       lastResync.current = nowMs;
       voiceOver.currentTime = element.currentTime;
     }
+    // A sound effect starts when the playhead reaches it (or part-way in, when playing from its middle).
+    const now = timelineTime(timeline, place.index, element.currentTime);
+    heardSounds.forEach((sound) => {
+      if (started.current.has(sound.id) || now < sound.time || now >= sound.time + sound.seconds - 0.05) return;
+      started.current.add(sound.id);
+      const effect = soundPlayers.current[sound.id];
+      if (!effect) return;
+      effect.volume = previewSoundGain(sound.volume);
+      effect.currentTime = now - sound.time > 0.1 ? now - sound.time : 0;
+      effect.play?.()?.catch?.(() => {});
+    });
     // The playhead is redrawn about 12 times a second: redrawing the whole editor on every frame
     // made the sound stutter on phones.
     if (nowMs - lastDraw.current < PLAYHEAD_REDRAW_MS) return;
     lastDraw.current = nowMs;
-    setTime(timelineTime(timeline, place.index, element.currentTime));
+    setTime(now);
   };
   // A smooth playhead while playing (the player itself reports only a few times a second).
   useEffect(() => {
@@ -408,6 +531,9 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   };
   const captionScene = selected?.type === 'caption' ? ready.find(({ scene }) => scene.id === selected.id) : null;
   const cardOn = endCard.enabled && Boolean(endCard.imageRef);
+  const chosenSound = selected?.type === 'sound' ? sounds.find((sound) => sound.id === selected.id) : null;
+  const addingSound = selected?.type === 'newSound' && soundsOffered;
+  const showSounds = soundsOffered || sounds.length > 0;
 
   return (
     <section className="card card-white editor-card" aria-labelledby={`${baseId}-title`}>
@@ -423,6 +549,14 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
           <button type="button" id="editor-export" className="btn btn-secondary btn-sm" onClick={handleExport} disabled={disabled || exporting || packageBuilding}>
             {exporting || packageBuilding ? <LoadingSpinner size="sm" label="Preparing…" /> : 'Export for another editor'}
           </button>
+          {soundsOffered && (
+            <button
+              type="button" id="editor-add-sound" className="btn btn-secondary btn-sm" disabled={disabled}
+              aria-pressed={addingSound} onClick={() => setSelected({ type: 'newSound' })}
+            >
+              Add sound
+            </button>
+          )}
           <div className="editor-zoom" role="group" aria-label="Zoom">
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setScale(zoomScale(pps, -1))} aria-label="Zoom out">−</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setScale(null)}>Fit</button>
@@ -479,6 +613,12 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
             );
           })}
           {music?.url && <audio ref={audio} src={music.url} loop preload="auto" aria-hidden="true" />}
+          {sounds.map((sound) => (sound.url ? (
+            <audio
+              key={sound.id} ref={(element) => { soundPlayers.current[sound.id] = element; }} src={sound.url} preload="auto"
+              aria-hidden="true" data-testid={`sound-${sound.id}`}
+            />
+          ) : null))}
           {timeline.clips.map((clip) => {
             const url = revoicedUrl(project, clip.scene);
             return url ? (
@@ -595,10 +735,86 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               <p className="field-hint">Change its picture, or switch it off, under “End card” above.</p>
             </>
           )}
-          {!chosen && !captionScene && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
+          {addingSound && (
+            <>
+              <h3 className="editor-inspector-title">New sound effect</h3>
+              <label className="visually-hidden" htmlFor={`${baseId}-sound-prompt`}>Describe the sound</label>
+              <input
+                id={`${baseId}-sound-prompt`} className="input" type="text" maxLength={300} value={soundPrompt}
+                placeholder="Describe the sound, e.g. soft whoosh" disabled={disabled || makingSound}
+                onChange={(e) => setSoundPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleMakeSound(); }}
+              />
+              <div className="editor-sound-ideas" role="group" aria-label="Ideas">
+                {SOUND_IDEAS.map((idea) => (
+                  <button
+                    key={idea.label} type="button" className="btn btn-ghost btn-sm" disabled={disabled || makingSound}
+                    onClick={() => setSoundPrompt(idea.prompt)}
+                  >
+                    {idea.label}
+                  </button>
+                ))}
+              </div>
+              <div className="editor-sound-make">
+                <label htmlFor={`${baseId}-sound-seconds`}>Length</label>
+                <select
+                  id={`${baseId}-sound-seconds`} className="select" value={soundSeconds} disabled={disabled || makingSound}
+                  onChange={(e) => setSoundSeconds(Number(e.target.value))}
+                >
+                  <option value={0}>Automatic</option>
+                  {SOUND_LENGTHS.map((seconds) => <option key={seconds} value={seconds}>{seconds} {seconds === 1 ? 'second' : 'seconds'}</option>)}
+                </select>
+                <button
+                  type="button" className="btn btn-primary btn-sm" onClick={handleMakeSound}
+                  disabled={disabled || makingSound || soundPrompt.trim().length < 2 || sounds.length >= MAX_SOUNDS}
+                >
+                  {makingSound ? <LoadingSpinner size="sm" label="Making the sound…" /> : 'Make it and place it'}
+                </button>
+              </div>
+              <p className="field-hint">
+                {sounds.length >= MAX_SOUNDS
+                  ? `This video already has ${MAX_SOUNDS} sound effects. Remove one to add another.`
+                  : `It is placed at the playhead (${clock(time, true)}). Drag it along the Sounds track to move it.`}
+              </p>
+            </>
+          )}
+          {chosenSound && (
+            <>
+              <div className="editor-inspector-head">
+                <h3 className="editor-inspector-title">Sound: {chosenSound.name}</h3>
+                <button type="button" className="link-button" onClick={() => removeSound(chosenSound)} disabled={disabled}>Remove</button>
+              </div>
+              {chosenSound.time === null ? (
+                <p className="field-hint">Not heard: it sits on a part of the video that is cut away or left out. Remove it, or bring that part back.</p>
+              ) : (
+                <div className="editor-sound-make">
+                  <label htmlFor={`${baseId}-sound-at`}>Starts at</label>
+                  <input
+                    id={`${baseId}-sound-at`} className="input" type="number" min={0} max={Number(timeline.total.toFixed(1))} step={0.1}
+                    value={Number(chosenSound.time.toFixed(1))} disabled={disabled}
+                    onChange={(e) => moveSound(chosenSound, Number(e.target.value))}
+                  />
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => hearSound(chosenSound)}>Listen</button>
+                </div>
+              )}
+              <label className="editor-range" htmlFor={`${baseId}-sound-volume`}>
+                <span>Volume</span>
+                <input
+                  id={`${baseId}-sound-volume`} type="range" min={0} max={100} step={5} value={chosenSound.volume} disabled={disabled}
+                  onChange={(e) => changeSound(chosenSound, { volume: Number(e.target.value) })}
+                />
+                <output>{chosenSound.volume}%</output>
+              </label>
+              <p className="field-hint">
+                {chosenSound.seconds.toFixed(1)}s long. It stays on the same moment of its scene when you trim other scenes.
+              </p>
+            </>
+          )}
+          {!chosen && !captionScene && !addingSound && !chosenSound && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
             <p className="field-hint">
               Select a clip to trim it or change its volume, a caption to change its text, or the music for its volume.
               Drag a clip&apos;s edges to cut its start or end, and drag on the ruler to move the playhead.
+              {soundsOffered && ' “Add sound” puts a sound effect at the playhead.'}
             </p>
           )}
         </div>
@@ -610,6 +826,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
           <span className="tl-label is-video">Video</span>
           <span className="tl-label">Voice</span>
           {captionStyle !== 'none' && <span className="tl-label">Captions</span>}
+          {showSounds && <span className="tl-label">Sounds</span>}
           <span className="tl-label">Music</span>
         </div>
 
@@ -723,6 +940,36 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               </div>
             )}
 
+            {showSounds && (
+              <div className="tl-track" role="group" aria-label="Sounds track">
+                {heardSounds.map((sound) => {
+                  const isSelected = chosenSound?.id === sound.id;
+                  return (
+                    <button
+                      key={sound.id} type="button"
+                      className={`tl-block is-sound ${isSelected ? 'is-selected' : ''}`}
+                      style={{ left: `${sound.time * pps}px`, width: `${Math.max(MIN_SOUND_WIDTH, sound.seconds * pps)}px` }}
+                      title={`${sound.name}. Drag to move it.`}
+                      aria-pressed={isSelected}
+                      aria-label={`Sound: ${sound.name}, at ${clock(sound.time, true)}, volume ${sound.volume}%`}
+                      onClick={() => setSelected({ type: 'sound', id: sound.id })}
+                      onPointerDown={(event) => startSoundDrag(event, sound)}
+                      onPointerMove={(event) => moveSoundDrag(event, sound)}
+                      onPointerUp={() => endSoundDrag(sound)}
+                      onPointerCancel={() => endSoundDrag(sound)}
+                    >
+                      <span className="tl-block-text">{sound.name}</span>
+                    </button>
+                  );
+                })}
+                {!heardSounds.length && (
+                  <div className="tl-block is-empty" style={{ left: 0, width: `${width}px` }}>
+                    <span className="tl-block-text">No sound effects. “Add sound” puts one at the playhead.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="tl-track" role="group" aria-label="Music track">
               {music ? (
                 <button
@@ -749,8 +996,21 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
         </div>
       </div>
 
+      {lostSounds.length > 0 && (
+        <p className="field-hint editor-foot">
+          {lostSounds.length === 1 ? 'One sound effect is' : `${lostSounds.length} sound effects are`} not heard,
+          because {lostSounds.length === 1 ? 'its' : 'their'} part of the video is cut away or left out:{' '}
+          {lostSounds.map((sound, index) => (
+            <React.Fragment key={sound.id}>
+              {index > 0 && ', '}
+              <button type="button" className="link-button" onClick={() => setSelected({ type: 'sound', id: sound.id })}>{sound.name}</button>
+            </React.Fragment>
+          ))}.
+        </p>
+      )}
+
       <p className="field-hint editor-foot" role="status">
-        {voiceState === 'off' && 'The preview plays each scene’s own voice with the music.'}
+        {voiceState === 'off' && 'The preview plays each scene’s own voice with the music and the sound effects.'}
         {voiceState === 'ready' && `The preview plays the voice you chose (${voice.name || 'one voice'}) with the music.`}
         {voiceLoading && `The voice you chose (${voice.name || 'one voice'}) is still loading: each scene switches to it as soon as it is ready.`}
         {voiceState === 'failed' && (

@@ -229,6 +229,7 @@ def test_older_frontends_flat_fields_are_still_understood(api, monkeypatch):
 def test_duplicate_copies_the_script_and_files_but_no_takes(api, monkeypatch):
     project(api, title="Mug ad", idea="A mug", status="done", startingImageRef="users/u1/projects/p1/creator.jpg", settings={
         "duration": 6,
+        "sounds": {"w": {"storageRef": "users/u1/projects/p1/sounds/w.mp3", "sceneId": "0", "at": 1}},
         "reference": {"storageRef": REFERENCE, "url": "old", "breakdown": {"scenes": [{"purpose": "Hook"}]}},
         "endCard": {"imageRef": "users/u2/projects/x/card.png", "enabled": True},   # not this project's file
     })
@@ -246,6 +247,7 @@ def test_duplicate_copies_the_script_and_files_but_no_takes(api, monkeypatch):
     assert copy["settings"]["reference"]["storageRef"] == f"users/u1/projects/{new_id}/reference/video_1.mp4"
     assert copy["settings"]["reference"]["breakdown"] == {"scenes": [{"purpose": "Hook"}]}
     assert "endCard" not in copy["settings"]
+    assert "sounds" not in copy["settings"]            # they sit on moments of takes, which are not copied
     new_scene = api.db.store[f"projects/{new_id}/scenes/0"]
     assert new_scene["script"] == "Hello"
     assert new_scene["attempt"] == 0 and "storageRef" not in new_scene

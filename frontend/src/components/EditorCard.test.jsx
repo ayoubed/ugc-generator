@@ -1,13 +1,20 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import EditorCard from './EditorCard';
 import { updateProjectSettings } from '../hooks/useProject';
-import { exportPackage, previewVoice } from '../services/api';
+import { exportPackage, makeSound, previewVoice } from '../services/api';
 
+// Sound effects are offered when the voice service is set up; a test switches it off to check that.
+const voiceService = { available: true };
 vi.mock('../hooks/useProject', () => ({ updateProjectSettings: vi.fn(async () => {}) }));
-vi.mock('../services/api', () => ({ exportPackage: vi.fn(async () => ({})), previewVoice: vi.fn(async () => ({})) }));
+vi.mock('../hooks/useVoices', () => ({ useVoices: () => ({ available: voiceService.available, voices: [], loading: false, error: '' }) }));
+vi.mock('../services/api', () => ({
+  exportPackage: vi.fn(async () => ({})),
+  previewVoice: vi.fn(async () => ({})),
+  makeSound: vi.fn(async () => ({})),
+}));
 vi.mock('firebase/firestore', () => ({ deleteField: () => 'DELETE' }));
 
 // Without a measured width the timeline is drawn at 60 pixels per second.
@@ -25,7 +32,10 @@ const clip = (number) => screen.getByRole('button', { name: new RegExp(`^Scene $
 const left = (element) => element.style.left;
 const width = (element) => element.style.width;
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  voiceService.available = true;
+});
 
 describe('the timeline', () => {
   it('has a track each for the picture, the voices, the captions and the music', () => {
@@ -449,7 +459,7 @@ describe('hearing the chosen voice in the editor', () => {
 
   it('plays each scene\'s own voice when no voice is chosen', () => {
     show();
-    expect(screen.getByText(/The preview plays each scene’s own voice with the music\./)).toBeTruthy();
+    expect(screen.getByText(/The preview plays each scene’s own voice with the music and the sound effects\./)).toBeTruthy();
     expect(document.querySelector('[data-testid^="dub-"]')).toBeNull();
     expect(previewVoice).not.toHaveBeenCalled();
   });
@@ -563,5 +573,167 @@ describe('the export downloads by itself', () => {
     } finally {
       click.mockRestore();
     }
+  });
+});
+
+describe('sound effects', () => {
+  const WHOOSH = { name: 'Whoosh', prompt: 'soft whoosh', storageRef: 'users/u1/projects/p1/sounds/w.mp3', url: 'https://files.test/w.mp3', seconds: 1, sceneId: '1', at: 2, volume: 60 };
+  const sound = (name) => track('Sounds track').getByRole('button', { name: new RegExp(`^Sound: ${name},`) });
+  const at = (element, seconds) => Object.defineProperty(element, 'currentTime', { value: seconds, configurable: true, writable: true });
+  const preview = () => screen.getByLabelText(/^Preview: scene/);
+
+  it('makes a sound from a description and puts it at the playhead', async () => {
+    makeSound.mockResolvedValueOnce({ id: 's1', name: 'Soft whoosh', prompt: 'soft whoosh', storageRef: 'users/u1/projects/p1/sounds/s1.mp3', url: 'https://files.test/s1.mp3', seconds: 1.2 });
+    show();
+    document.querySelector('.tl-canvas').getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 200 });
+    fireEvent.pointerDown(screen.getByTestId('editor-ruler'), { clientX: 7 * PPS, pointerId: 1 });   // 2s into scene 2
+    expect(track('Sounds track').getByText(/No sound effects/)).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add sound' }));
+    expect(screen.getByRole('heading', { name: 'New sound effect' })).toBeTruthy();
+    expect(screen.getByText(/It is placed at the playhead \(0:07\.0\)/)).toBeTruthy();
+    const make = screen.getByRole('button', { name: 'Make it and place it' });
+    expect(make.disabled).toBe(true);                                     // nothing described yet
+    await userEvent.type(screen.getByLabelText('Describe the sound'), 'soft whoosh');
+    await userEvent.selectOptions(screen.getByLabelText('Length'), '2');
+    await userEvent.click(make);
+
+    expect(makeSound).toHaveBeenCalledWith('p1', { prompt: 'soft whoosh', seconds: 2 });
+    await waitFor(() => expect(saved()).toEqual(['p1', { 'sounds.s1': {
+      id: 's1', name: 'Soft whoosh', prompt: 'soft whoosh', storageRef: 'users/u1/projects/p1/sounds/s1.mp3',
+      url: 'https://files.test/s1.mp3', seconds: 1.2, volume: 60, sceneId: '1', at: 2,
+    } }]));
+    expect([left(sound('Soft whoosh')), width(sound('Soft whoosh'))]).toEqual([`${7 * PPS}px`, `${1.2 * PPS}px`]);
+    expect(screen.getByRole('heading', { name: 'Sound: Soft whoosh' })).toBeTruthy();   // selected, ready to adjust
+  });
+
+  it('fills the description from an idea, and lets the service pick the length', async () => {
+    makeSound.mockResolvedValueOnce({ id: 's2', name: 'Pop', storageRef: 'f.mp3', url: 'u', seconds: 0.4 });
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'Add sound' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Ideas' })).getByRole('button', { name: 'Pop' }));
+    expect(screen.getByLabelText('Describe the sound').value).toBe('Single clean pop, like a bubble');
+    await userEvent.click(screen.getByRole('button', { name: 'Make it and place it' }));
+    expect(makeSound).toHaveBeenCalledWith('p1', { prompt: 'Single clean pop, like a bubble', seconds: null });
+  });
+
+  it('says why when the sound could not be made, and places nothing', async () => {
+    makeSound.mockRejectedValueOnce(new Error('The sound service did not accept this description. Reword it and try again.'));
+    show();
+    await userEvent.click(screen.getByRole('button', { name: 'Add sound' }));
+    await userEvent.type(screen.getByLabelText('Describe the sound'), 'zz');
+    await userEvent.click(screen.getByRole('button', { name: 'Make it and place it' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/did not accept this description/);
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Describe the sound').value).toBe('zz');    // kept, to reword it
+  });
+
+  it('is not offered without the sound service, but sounds already placed are still shown', () => {
+    voiceService.available = false;
+    const { unmount } = show();
+    expect(screen.queryByRole('button', { name: 'Add sound' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sounds track' })).toBeNull();
+    unmount();
+    show({ settings: { sounds: { w: WHOOSH } } });
+    expect(sound('Whoosh')).toBeTruthy();
+  });
+
+  it('shows a sound where its moment of the scene is, also after an earlier scene is trimmed', () => {
+    show({ settings: { sounds: { w: WHOOSH } } });
+    expect(left(sound('Whoosh'))).toBe(`${7 * PPS}px`);                    // scene 1 is 5s, then 2s into scene 2
+    cleanup();
+    show({ settings: { sounds: { w: WHOOSH }, edits: { 0: { attempt: 1, end: 3 } } } });
+    expect(left(sound('Whoosh'))).toBe(`${5 * PPS}px`);                    // scene 1 now ends at 3s
+  });
+
+  it('moves when it is dragged along its track, and saves when let go', async () => {
+    show({ settings: { sounds: { w: WHOOSH } } });
+    const block = sound('Whoosh');
+    fireEvent.pointerDown(block, { clientX: 400, pointerId: 1 });
+    fireEvent.pointerMove(block, { clientX: 400 - 4 * PPS, pointerId: 1 });   // 4s earlier: into scene 1
+    expect(left(sound('Whoosh'))).toBe(`${3 * PPS}px`);
+    expect(updateProjectSettings).not.toHaveBeenCalled();                    // not on every pixel
+    fireEvent.pointerUp(sound('Whoosh'), { pointerId: 1 });
+    expect(saved()).toEqual(['p1', { 'sounds.w': { id: 'w', ...WHOOSH, sceneId: '0', at: 3 } }]);
+  });
+
+  it('is only selected, not moved, by a click', () => {
+    show({ settings: { sounds: { w: WHOOSH } } });
+    const block = sound('Whoosh');
+    fireEvent.pointerDown(block, { clientX: 400, pointerId: 1 });
+    fireEvent.pointerMove(block, { clientX: 401, pointerId: 1 });
+    fireEvent.pointerUp(block, { pointerId: 1 });
+    fireEvent.click(block);
+    expect(updateProjectSettings).not.toHaveBeenCalled();
+    expect(block.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('has its start, volume and removal in the panel', async () => {
+    show({ settings: { sounds: { w: WHOOSH } } });
+    await userEvent.click(sound('Whoosh'));
+    expect(screen.getByLabelText('Starts at').value).toBe('7');
+    fireEvent.change(screen.getByLabelText('Volume'), { target: { value: '85' } });
+    expect(screen.getByRole('button', { name: 'Sound: Whoosh, at 0:07.0, volume 85%' })).toBeTruthy();
+    await waitFor(() => expect(saved()[1]['sounds.w'].volume).toBe(85), { timeout: 2000 });
+
+    fireEvent.change(screen.getByLabelText('Starts at'), { target: { value: '1.5' } });
+    expect(left(sound('Whoosh'))).toBe(`${1.5 * PPS}px`);
+    await waitFor(() => expect(saved()[1]['sounds.w']).toMatchObject({ sceneId: '0', at: 1.5, volume: 85 }), { timeout: 2000 });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(saved()).toEqual(['p1', { 'sounds.w': 'DELETE' }]);
+    expect(track('Sounds track').queryByRole('button')).toBeNull();
+  });
+
+  it('plays the sound on its own with Listen', async () => {
+    show({ settings: { sounds: { w: WHOOSH } } });
+    const player = screen.getByTestId('sound-w');
+    player.play = vi.fn(() => Promise.resolve());
+    await userEvent.click(sound('Whoosh'));
+    await userEvent.click(screen.getByRole('button', { name: 'Listen' }));
+    expect(player.play).toHaveBeenCalledTimes(1);
+    expect(player.volume).toBeCloseTo(0.42);                                // 60% of a voice at 100%
+  });
+
+  it('starts the sound when the playhead reaches it, once', async () => {
+    show({ settings: { sounds: { w: { ...WHOOSH, sceneId: '0', at: 2 } } } });
+    const player = screen.getByTestId('sound-w');
+    player.play = vi.fn(() => Promise.resolve());
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    at(preview(), 1);
+    fireEvent.timeUpdate(preview());
+    expect(player.play).not.toHaveBeenCalled();
+    at(preview(), 2.02);
+    fireEvent.timeUpdate(preview());
+    expect(player.play).toHaveBeenCalledTimes(1);
+    at(preview(), 2.3);
+    fireEvent.timeUpdate(preview());
+    expect(player.play).toHaveBeenCalledTimes(1);
+
+    // Pausing stops it; playing again from its middle picks it up part-way in.
+    player.pause = vi.fn();
+    await userEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(player.pause).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Play' }));
+    at(preview(), 2.5);
+    fireEvent.timeUpdate(preview());
+    expect(player.play).toHaveBeenCalledTimes(2);
+    expect(player.currentTime).toBeCloseTo(0.5);
+  });
+
+  it('says when a sound sits on a part that is cut away, and lets it be removed', async () => {
+    show({ settings: { sounds: { w: { ...WHOOSH, sceneId: '0', at: 4.5 } }, edits: { 0: { attempt: 1, end: 3 } } } });
+    expect(track('Sounds track').queryByRole('button')).toBeNull();
+    expect(screen.getByText(/One sound effect is not heard/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Whoosh' }));
+    expect(screen.getByText(/Not heard: it sits on a part of the video that is cut away/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(saved()).toEqual(['p1', { 'sounds.w': 'DELETE' }]);
+    expect(screen.queryByText(/not heard/)).toBeNull();
+  });
+
+  it('can sit on the end card', () => {
+    show({ settings: { endCard: { enabled: true, imageRef: 'card.png', seconds: 3 }, sounds: { d: { ...WHOOSH, name: 'Ding', sceneId: 'end', at: 0.5 } } } });
+    expect(left(sound('Ding'))).toBe(`${10.5 * PPS}px`);
   });
 });

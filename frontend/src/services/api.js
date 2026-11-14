@@ -362,6 +362,17 @@ export function exportPackage(projectId) {
   return callApi(`/api/projects/${projectId}/package`, { fallback: 'Could not start the export' });
 }
 
+/**
+ * Make a sound effect from a description. Returns { id, name, prompt, storageRef, url, seconds };
+ * the editor saves where it goes. `seconds` left out lets the service pick a fitting length.
+ */
+export function makeSound(projectId, { prompt, seconds = null }) {
+  return callApi(`/api/projects/${projectId}/sounds`, {
+    body: seconds ? { prompt, seconds } : { prompt },
+    fallback: 'Could not make the sound',
+  });
+}
+
 /** Re-voice the project's scenes to its chosen voice, so the editor can play it (watch project.voicePreview). */
 export function previewVoice(projectId) {
   return callApi(`/api/projects/${projectId}/voice/preview`, { fallback: 'Could not prepare the voice' });

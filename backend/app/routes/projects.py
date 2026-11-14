@@ -199,6 +199,8 @@ def duplicate_project_endpoint(
             settings["music"] = {**music, "storageRef": new_path, "url": new_url}
         else:
             settings.pop("music", None)
+    # Sound effects sit on moments of takes, and takes are not copied.
+    settings.pop("sounds", None)
 
     # The script: scene texts and pictures, without takes.
     scene_docs: List[Tuple[str, Dict[str, Any]]] = []

@@ -1066,6 +1066,67 @@ def scene_volume_db(edit: Optional[Dict[str, Any]]) -> float:
         return 0.0
     return round(20.0 * math.log10(min(MAX_SCENE_VOLUME, max(0.05, volume))), 2)
 
+# --- sound effects placed in the editor ---
+SOUND_DEFAULT_PERCENT = 60
+SOUND_START_SLACK = 0.01   # a hair before the kept start still counts as the start (places are saved to 0.01s)
+SOUND_PEAK_DB = -3.0   # every effect is brought to this peak, then turned down by its volume
+
+
+def sound_volume_factor(value: Any) -> float:
+    """An effect's volume from the editor (0 to 100) as a factor on its leveled signal."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        value = SOUND_DEFAULT_PERCENT
+    return round(max(0.0, min(100.0, float(value))) / 100.0, 3)
+
+
+def place_sounds(clips: List[Dict[str, Any]], sounds: Optional[List[Dict[str, Any]]], has_end_card: bool = False) -> List[Dict[str, Any]]:
+    """
+    When each sound effect starts in the finished video. A sound is pinned to a moment of a scene's
+    clip ({"clip": index, "at": seconds in that clip's file}) so it stays on the same frame however
+    the scenes are trimmed; {"clip": "end"} pins it to the end card. `clips` are the clips as cut
+    (trim_start, duration), the end card last when there is one. A sound whose moment was cut away,
+    or whose scene is not in the video, is left out. Returns the kept sounds with "time" added.
+    """
+    starts, at = [], 0.0
+    for clip in clips:
+        starts.append(at)
+        at += max(0.05, float(clip["duration"]))
+    scene_count = len(clips) - (1 if has_end_card else 0)
+    placed = []
+    for sound in sounds or []:
+        moment = _as_float(sound.get("at"))
+        if moment is None or moment < 0:
+            continue
+        index = sound.get("clip")
+        if index == "end":
+            index = len(clips) - 1 if has_end_card else None
+        elif isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < scene_count:
+            index = None
+        if index is None:
+            continue
+        clip = clips[index]
+        t0, d = float(clip.get("trim_start") or 0.0), max(0.05, float(clip["duration"]))
+        if not t0 - SOUND_START_SLACK <= moment < t0 + d:
+            continue
+        placed.append({**sound, "time": round(starts[index] + max(0.0, moment - t0), 3)})
+    return placed
+
+
+def measure_peak_db(path: str) -> Optional[float]:
+    """The loudest peak of an audio file in dBFS, or None when it is silent or cannot be read."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vn", "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as e:
+        logger.warning("Could not measure the peak of %s: %s", path, e)
+        return None
+    match = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB", result.stderr or "")
+    peak = float(match.group(1)) if match else None
+    return peak if peak is not None and peak > SILENCE_LUFS else None
+
+
 CUT_FADE_SECONDS = 0.03      # tiny fade at every cut, so scene audio never clicks or jumps
 SCENE_LOUDNESS_LUFS = -16.0  # every scene (and the music) is leveled to this before mixing
 FINAL_LOUDNESS_LUFS = -14.0  # usual target for TikTok / Reels / Shorts
@@ -1184,6 +1245,7 @@ def build_stitch_audio_filter(
     room_tone: bool = False,
     music_start: float = 0.0,
     music_tempo: float = 1.0,
+    sounds: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[str, float]:
     """
     ffmpeg filter graph for the stitched audio, before the final loudness pass.
@@ -1192,6 +1254,8 @@ def build_stitch_audio_filter(
     under everything so the silence between scenes doesn't drop to dead air.
     `music_tempo` plays the music slightly faster or slower and `music_start` then skips that many
     seconds of it, so its beats land on the cuts (see app.beats).
+    `sounds` are the editor's sound effects: [{"input_index", "time" (seconds into the video),
+    "gain_db", "volume" (0 to 100)}], each mixed in at its moment, on top of the voice and music.
     Returns (filter_complex, total_duration). The output label is [aout].
     """
     parts: List[str] = []
@@ -1233,6 +1297,19 @@ def build_stitch_audio_filter(
         parts.append("[music][vkey]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=350[ducked]")
         parts.append("[vmain][ducked]amix=inputs=2:duration=first:normalize=0[mix]")
         final_in = "[mix]"
+
+    heard = [s for s in sounds or [] if sound_volume_factor(s.get("volume")) > 0 and float(s["time"]) < total]
+    if heard:
+        for n, sound in enumerate(heard):
+            delay = int(round(max(0.0, float(sound["time"])) * 1000))
+            parts.append(
+                f"[{sound['input_index']}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                f"volume={float(sound.get('gain_db') or 0.0):.2f}dB,volume={sound_volume_factor(sound.get('volume'))},"
+                f"adelay={delay}:all=1[fx{n}]"
+            )
+        fx = "".join(f"[fx{n}]" for n in range(len(heard)))
+        parts.append(f"{final_in}{fx}amix=inputs={len(heard) + 1}:duration=first:normalize=0[withfx]")
+        final_in = "[withfx]"
 
     if room_tone:
         parts.append(
@@ -1330,6 +1407,7 @@ def stitch_videos(
     caption_words: Optional[List[Optional[List[Tuple[str, float, float]]]]] = None,
     edits: Optional[List[Optional[Dict[str, Any]]]] = None,
     report: Optional[Dict[str, Any]] = None,
+    sounds: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Stitches scene videos into one video. `labels` name the clips in error messages ("Scene 2").
@@ -1340,6 +1418,10 @@ def stitch_videos(
     report: optional dict that receives "cuts": for each clip, the part that was kept
     ({"start", "end", "length"} in seconds, `length` being the whole clip), so the editor's
     timeline can show the automatic cut.
+    sounds: optional sound effects from the editor: [{"path", "clip" (index into video_paths, or
+    "end" for the end card), "at" (seconds in that clip's file), "volume" (0 to 100)}]. Each is
+    leveled and mixed in at its moment; see place_sounds for which are left out. `report` also
+    receives "sounds": how many were mixed in.
     end_card: optional {"image_path", "headline", "subline", "seconds"}: a closing card after the
     last scene (see make_end_card). It has no voice; the music carries through it.
 
@@ -1391,6 +1473,7 @@ def stitch_videos(
     width, height = width - width % 2, height - height % 2
     fps = next((c["fps"] for c in clips if c.get("fps")), None) or 24.0
 
+    has_end_card = False
     work_dir = tempfile.mkdtemp(prefix="ugc_stitch_audio_")
     try:
         if end_card and end_card.get("image_path") and os.path.exists(end_card["image_path"]):
@@ -1404,6 +1487,7 @@ def stitch_videos(
             video_paths = list(video_paths) + [card_path]
             clips.append(card)
             total_duration += max(0.05, card["duration"])
+            has_end_card = True
 
         # 1. Picture: trim, match size and frame rate, join, burn in the captions, encode once.
         video_parts: List[str] = []
@@ -1468,10 +1552,24 @@ def stitch_videos(
                     logger.info("Music and cuts: %s", beat_note)
                 cmd += ["-stream_loop", "-1", "-i", music_path]  # loops short tracks to cover the video
 
+        # Sound effects, each its own input, leveled by its peak (too short for a loudness reading).
+        mixed_sounds: List[Dict[str, Any]] = []
+        for sound in place_sounds(clips, sounds, has_end_card):
+            peak = measure_peak_db(sound["path"]) if os.path.exists(sound["path"]) else None
+            if peak is None:
+                continue
+            mixed_sounds.append({
+                **sound, "input_index": cmd.count("-i"),
+                "gain_db": max(-MAX_GAIN_DB, min(MAX_GAIN_DB, SOUND_PEAK_DB - peak)),
+            })
+            cmd += ["-i", sound["path"]]
+        if report is not None:
+            report["sounds"] = len(mixed_sounds)
+
         # Room tone only when something is heard: in a silent video the final loudness pass would turn it up.
         filter_complex, total = build_stitch_audio_filter(
-            clips, music_index, music_volume, music_gain, room_tone=any_sound, music_start=music_start,
-            music_tempo=music_tempo,
+            clips, music_index, music_volume, music_gain, room_tone=any_sound or bool(mixed_sounds),
+            music_start=music_start, music_tempo=music_tempo, sounds=mixed_sounds,
         )
         mix_path = os.path.join(work_dir, "mix.wav")
         cmd += ["-filter_complex", filter_complex, "-map", "[aout]", "-c:a", "pcm_s16le", "-ar", "48000", mix_path]
