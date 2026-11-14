@@ -15,6 +15,10 @@ import {
 import {
   PAUSE_HINT, changeNarration, narrationClock, narrationOverflow, narrationSpan, sceneNarration,
 } from '../utils/narration';
+import {
+  CAPTION_BLOCKS_PER_SCENE, CAPTION_BLOCK_DEFAULT_SECONDS, CAPTION_BLOCK_MIN_SECONDS, blockSpan, blocksOfScene, changeBlock,
+  isCaptionedByHand, newBlockId, projectCaptionBlocks, splitCaption, storedBlock,
+} from '../utils/captionBlocks';
 import { revoicedUrl, voicePreviewState } from '../utils/voicePreview';
 import { autoCut, buildTimeline, clock, fitScale, locate, rulerMarks, timelineTime, zoomScale } from '../utils/timeline';
 
@@ -31,6 +35,10 @@ const SAVE_DELAY_MS = 500;
  * A clip on the picture track is trimmed by dragging its edges, or with the Start and End fields
  * of the panel that opens when it is selected (the same thing, for the keyboard). The panel also
  * holds the scene's voice volume and mute; selecting the music bar shows its volume.
+ *
+ * A scene's captions can be placed by hand: its caption is cut into short captions on the Captions
+ * track, each dragged to move it, trimmed by its right edge, reworded or removed, and "Add
+ * caption" puts a new one at the playhead. Such a scene shows exactly these when stitched.
  *
  * A scene can get a narration: a voice made from its own text (which may differ from the script
  * and the caption, and can hold [pause] marks) that replaces the sound of the take. It is a block
@@ -95,6 +103,11 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const [narrationDrafts, setNarrationDrafts] = useState({});
   const [narrationTexts, setNarrationTexts] = useState({});
   const [makingVoice, setMakingVoice] = useState('');
+  // Captions placed by hand: the ones changed here and not yet back from the server (null =
+  // removed), and the scenes switched to "by hand" or back here.
+  const blockDrag = useRef(null);
+  const [blockDrafts, setBlockDrafts] = useState({});
+  const [manualDrafts, setManualDrafts] = useState({});
   const scrubbing = useRef(false);
   const canvas = useRef(null);
   const [selected, setSelected] = useState(null); // { type: 'clip' | 'caption', id } | { type: 'music' | 'card' } | null
@@ -345,6 +358,119 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     if (held?.moved && held.id === sound.id) {
       pending.current[`sounds.${sound.id}`] = stored(sound);
       flush(`sounds.${sound.id}`);
+    }
+  };
+
+  // ── Captions placed by hand ─────────────────────────────────────────────────────────────────
+  const captionBlocks = [
+    ...projectCaptionBlocks(project).filter((block) => !(block.id in blockDrafts)),
+    ...Object.values(blockDrafts).filter(Boolean),
+  ];
+  const byHand = (scene) => (scene.id in manualDrafts ? manualDrafts[scene.id] : isCaptionedByHand(project, scene.id));
+  const saveNow = (changes) => updateProjectSettings(project.id, changes).catch((err) => {
+    console.error('Could not save the captions:', err);
+    setError(friendlyError(err));
+  });
+  // The part of the clip the captions are spread over: where the narration is heard, or the kept part.
+  const spokenSpan = (clip) => {
+    const narration = activeNarration(clip.scene);
+    if (!narration) return [clip.start, clip.end];
+    const from = Math.max(narration.at, clip.start);
+    const to = Math.min(narration.at + narration.length, clip.end);
+    return to - from > CAPTION_BLOCK_MIN_SECONDS ? [from, to] : [clip.start, clip.end];
+  };
+  // Switches a scene to captions placed by hand: its caption, cut into short ones. Returns them.
+  const placeByHand = (clip, extra = []) => {
+    const [from, to] = spokenSpan(clip);
+    const made = [...splitCaption(captionOf(clip.scene), from, to), ...extra]
+      .map((block) => ({ ...block, id: newBlockId(), sceneId: clip.id }));
+    const changes = { [`captions.manual.${clip.id}`]: true };
+    made.forEach((block) => { changes[`captions.blocks.${block.id}`] = storedBlock(block); });
+    setManualDrafts((prev) => ({ ...prev, [clip.id]: true }));
+    setBlockDrafts((prev) => ({ ...prev, ...Object.fromEntries(made.map((block) => [block.id, block])) }));
+    setError('');
+    saveNow(changes);
+    return made;
+  };
+  const backToAutomatic = (scene) => {
+    const changes = { [`captions.manual.${scene.id}`]: deleteField() };
+    const gone = {};
+    blocksOfScene(captionBlocks, scene.id).forEach((block) => {
+      changes[`captions.blocks.${block.id}`] = deleteField();
+      gone[block.id] = null;
+    });
+    setManualDrafts((prev) => ({ ...prev, [scene.id]: false }));
+    setBlockDrafts((prev) => ({ ...prev, ...gone }));
+    setError('');
+    saveNow(changes);
+    setSelected({ type: 'caption', id: scene.id });
+  };
+  const editBlock = (block, field, value) => {
+    const scene = ready.find((item) => item.scene.id === block.sceneId)?.scene;
+    const next = changeBlock(block, field, value, scene ? lengthOf(scene) : block.at + block.length);
+    setBlockDrafts((prev) => ({ ...prev, [block.id]: next }));
+    saveSoon(`captions.blocks.${block.id}`, storedBlock(next));
+  };
+  const removeBlock = (block) => {
+    setBlockDrafts((prev) => ({ ...prev, [block.id]: null }));
+    pending.current[`captions.blocks.${block.id}`] = deleteField();
+    flush(`captions.blocks.${block.id}`);
+    setSelected(null);
+  };
+  // "Add caption": a new caption at the playhead, in the scene that is on screen there.
+  const addCaption = () => {
+    if (!current || !place) return;
+    const scene = current.scene;
+    const room = lengthOf(scene) - place.clipTime;
+    if (room < CAPTION_BLOCK_MIN_SECONDS) return;
+    const fresh = { at: Math.round(place.clipTime * 100) / 100, length: Math.min(CAPTION_BLOCK_DEFAULT_SECONDS, room), text: 'New caption' };
+    if (!byHand(scene)) {
+      // Nothing is lost: the scene's automatic caption is cut into captions first.
+      const made = placeByHand(current, [fresh]);
+      setSelected({ type: 'block', id: made[made.length - 1].id });
+      return;
+    }
+    if (blocksOfScene(captionBlocks, scene.id).length >= CAPTION_BLOCKS_PER_SCENE) {
+      setError(`A scene can have ${CAPTION_BLOCKS_PER_SCENE} captions at most. Remove one to add another.`);
+      return;
+    }
+    const block = { ...fresh, id: newBlockId(), sceneId: scene.id };
+    setBlockDrafts((prev) => ({ ...prev, [block.id]: block }));
+    pending.current[`captions.blocks.${block.id}`] = storedBlock(block);
+    flush(`captions.blocks.${block.id}`);
+    setSelected({ type: 'block', id: block.id });
+  };
+  // Dragging a caption moves it; dragging its right edge makes it longer or shorter. Saved when let go.
+  const startBlockDrag = (event, block, side = 'move') => {
+    if (disabled) return;
+    event.stopPropagation();
+    blockDrag.current = { id: block.id, side, x: event.clientX, at: block.at, length: block.length, moved: false };
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // without capture the drag still works while the pointer is over the caption
+    }
+    setSelected({ type: 'block', id: block.id });
+  };
+  const moveBlockDrag = (event, block) => {
+    const held = blockDrag.current;
+    if (!held || held.id !== block.id || !Number.isFinite(event.clientX)) return;
+    if (!held.moved && Math.abs(event.clientX - held.x) < 3) return;   // a click, not a drag
+    held.moved = true;
+    const shift = (event.clientX - held.x) / pps;
+    const scene = ready.find((item) => item.scene.id === block.sceneId)?.scene;
+    const seconds = scene ? lengthOf(scene) : block.at + block.length;
+    const next = held.side === 'end'
+      ? changeBlock(block, 'length', held.length + shift, seconds)
+      : changeBlock({ ...block, length: held.length }, 'at', held.at + shift, seconds);
+    setBlockDrafts((prev) => ({ ...prev, [block.id]: next }));
+  };
+  const endBlockDrag = (block) => {
+    const held = blockDrag.current;
+    blockDrag.current = null;
+    if (held?.moved && held.id === block.id) {
+      pending.current[`captions.blocks.${block.id}`] = storedBlock(block);
+      flush(`captions.blocks.${block.id}`);
     }
   };
 
@@ -668,6 +794,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
     onPointerCancel: () => { scrubbing.current = false; },
   };
   const captionScene = selected?.type === 'caption' ? ready.find(({ scene }) => scene.id === selected.id) : null;
+  const chosenBlock = selected?.type === 'block' ? captionBlocks.find((block) => block.id === selected.id) : null;
+  const chosenBlockClip = chosenBlock ? timeline.clips.find((clip) => clip.id === chosenBlock.sceneId) : null;
   const cardOn = endCard.enabled && Boolean(endCard.imageRef);
   const chosenSound = selected?.type === 'sound' ? sounds.find((sound) => sound.id === selected.id) : null;
   const voiceClip = selected?.type === 'voice' ? timeline.clips.find((clip) => clip.id === selected.id) : null;
@@ -690,6 +818,11 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
           <button type="button" id="editor-export" className="btn btn-secondary btn-sm" onClick={handleExport} disabled={disabled || exporting || packageBuilding}>
             {exporting || packageBuilding ? <LoadingSpinner size="sm" label="Preparing…" /> : 'Export for another editor'}
           </button>
+          {captionStyle !== 'none' && (
+            <button type="button" id="editor-add-caption" className="btn btn-secondary btn-sm" disabled={disabled || !current} onClick={addCaption}>
+              Add caption
+            </button>
+          )}
           {soundsOffered && (
             <button
               type="button" id="editor-add-sound" className="btn btn-secondary btn-sm" disabled={disabled}
@@ -934,6 +1067,54 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                 onBlur={() => (captions ? captions.commit(captionScene.scene.id) : flush(`captions.texts.${captionScene.scene.id}`))}
               />
               <p className="field-hint">Shown word by word while the scene plays. Leave it empty for no caption on this scene.</p>
+              <button
+                type="button" className="link-button" disabled={disabled}
+                onClick={() => {
+                  const clip = timeline.clips.find((item) => item.id === captionScene.scene.id);
+                  const made = clip ? placeByHand(clip) : [];
+                  setSelected(made.length ? { type: 'block', id: made[0].id } : null);
+                }}
+              >
+                Place this scene&apos;s captions by hand
+              </button>
+            </>
+          )}
+          {chosenBlock && (
+            <>
+              <div className="editor-inspector-head">
+                <h3 className="editor-inspector-title">Caption{chosenBlockClip ? ` in scene ${chosenBlockClip.label}` : ''}</h3>
+                <button type="button" className="link-button" onClick={() => removeBlock(chosenBlock)} disabled={disabled}>Remove</button>
+              </div>
+              <label className="visually-hidden" htmlFor={`${baseId}-block-text`}>Caption text</label>
+              <input
+                id={`${baseId}-block-text`} className="input" type="text" maxLength={200} value={chosenBlock.text} disabled={disabled}
+                placeholder="What the caption says"
+                onChange={(e) => editBlock(chosenBlock, 'text', e.target.value)}
+              />
+              <div className="editor-fields">
+                <label htmlFor={`${baseId}-block-at`}>Starts at</label>
+                <input
+                  id={`${baseId}-block-at`} className="input" type="number" min={0} step={0.1}
+                  value={chosenBlock.at} disabled={disabled}
+                  onChange={(e) => editBlock(chosenBlock, 'at', Number(e.target.value))}
+                />
+                <label htmlFor={`${baseId}-block-length`}>Shown for</label>
+                <input
+                  id={`${baseId}-block-length`} className="input" type="number" min={CAPTION_BLOCK_MIN_SECONDS} step={0.1}
+                  value={chosenBlock.length} disabled={disabled}
+                  onChange={(e) => editBlock(chosenBlock, 'length', Number(e.target.value))}
+                />
+              </div>
+              <p className="field-hint">
+                {chosenBlockClip && !blockSpan(chosenBlockClip, chosenBlock)
+                  ? 'Not seen: it sits on a part of the scene that is cut away. Move it, or bring that part back.'
+                  : 'Times are seconds of its scene. Drag it on the Captions track to move it, or its right edge to make it longer or shorter.'}
+              </p>
+              {chosenBlockClip && (
+                <button type="button" className="link-button" onClick={() => backToAutomatic(chosenBlockClip.scene)} disabled={disabled}>
+                  Back to the automatic caption for this scene
+                </button>
+              )}
             </>
           )}
           {selected?.type === 'card' && cardOn && (
@@ -1026,7 +1207,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
               </p>
             </>
           )}
-          {!chosen && !voiceClip && !captionScene && !addingSound && !chosenSound && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
+          {!chosen && !voiceClip && !captionScene && !chosenBlock && !addingSound && !chosenSound && !(selected?.type === 'music' && music) && !(selected?.type === 'card' && cardOn) && (
             <p className="field-hint">
               Select a clip to trim it or change its volume, a caption to change its text, or the music for its volume.
               Drag a clip&apos;s edges to cut its start or end, and drag on the ruler to move the playhead.
@@ -1167,6 +1348,45 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
                 {timeline.clips.map((clip) => {
                   const text = captionOf(clip.scene).trim();
                   const isSelected = selected?.type === 'caption' && selected.id === clip.id;
+                  if (byHand(clip.scene)) {
+                    // Placed by hand: each caption where it is seen, dragged to move, trimmed by its right edge.
+                    const placed = blocksOfScene(captionBlocks, clip.id)
+                      .map((block) => ({ block, span: blockSpan(clip, block) })).filter((item) => item.span);
+                    if (!placed.length) {
+                      return (
+                        <div key={clip.id} className="tl-block is-caption is-empty" style={{ left: `${clip.at * pps}px`, width: `${clip.length * pps}px` }}>
+                          <span className="tl-block-text">No caption. “Add caption” puts one at the playhead.</span>
+                        </div>
+                      );
+                    }
+                    return placed.map(({ block, span }) => (
+                      <div
+                        key={block.id}
+                        className={`tl-block is-caption is-placed ${chosenBlock?.id === block.id ? 'is-selected' : ''}`}
+                        style={{ left: `${span.time * pps}px`, width: `${Math.max(12, span.length * pps)}px` }}
+                      >
+                        <button
+                          type="button" className="tl-block-body" title={`${block.text}. Drag to move it.`}
+                          aria-pressed={chosenBlock?.id === block.id}
+                          aria-label={`Caption in scene ${clip.label}: ${block.text || 'empty'}, at ${clock(span.time, true)}`}
+                          onClick={() => setSelected({ type: 'block', id: block.id })}
+                          onPointerDown={(event) => startBlockDrag(event, block)}
+                          onPointerMove={(event) => moveBlockDrag(event, block)}
+                          onPointerUp={() => endBlockDrag(block)}
+                          onPointerCancel={() => endBlockDrag(block)}
+                        >
+                          <span className="tl-block-text">{block.text || 'Empty'}</span>
+                        </button>
+                        <span
+                          className="tl-handle is-end" data-testid={`caption-end-${block.id}`} title="Drag to make it longer or shorter"
+                          onPointerDown={(event) => startBlockDrag(event, block, 'end')}
+                          onPointerMove={(event) => moveBlockDrag(event, block)}
+                          onPointerUp={() => endBlockDrag(block)}
+                          onPointerCancel={() => endBlockDrag(block)}
+                        />
+                      </div>
+                    ));
+                  }
                   return (
                     <button
                       key={clip.id} type="button"

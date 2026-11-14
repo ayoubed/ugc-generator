@@ -339,6 +339,42 @@ def scene_edits(project_data: Optional[Dict[str, Any]], scenes_list: List[tuple]
     return result
 
 
+CAPTION_BLOCK_MAX_PER_SCENE = 20
+
+
+def scene_caption_blocks(settings: Optional[Dict[str, Any]], doc_id: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    The scene's captions placed by hand in the editor, in order ([{"at", "length", "text"}], seconds
+    of the scene's clip), or None when its caption is the automatic one. A scene switched to "by
+    hand" with nothing placed has no caption at all (an empty list).
+
+    settings.captions.manual.<scene id> = true marks the scene; its captions are
+    settings.captions.blocks.<block id> = {sceneId, at, length, text}.
+    """
+    captions = (settings or {}).get("captions")
+    captions = captions if isinstance(captions, dict) else {}
+    manual = captions.get("manual") if isinstance(captions.get("manual"), dict) else {}
+    if not manual.get(doc_id):
+        return None
+    blocks = []
+    for block in (captions.get("blocks") if isinstance(captions.get("blocks"), dict) else {}).values():
+        if not isinstance(block, dict) or str(block.get("sceneId")) != str(doc_id):
+            continue
+        text = " ".join(str(block.get("text") or "").split())
+        try:
+            at, length = max(0.0, float(block.get("at") or 0)), float(block.get("length") or 0)
+        except (TypeError, ValueError):
+            continue
+        if text and length > 0:
+            blocks.append({"at": round(at, 3), "length": round(length, 3), "text": text[:200]})
+    return sorted(blocks, key=lambda b: b["at"])[:CAPTION_BLOCK_MAX_PER_SCENE]
+
+
+def caption_blocks_signature(blocks: List[Dict[str, Any]]) -> str:
+    """One line that changes whenever a hand-placed caption is added, removed, moved, trimmed or reworded."""
+    return "|".join(f"{b['at']:.2f}:{b['length']:.2f}:{b['text']}" for b in blocks)
+
+
 SOUND_END_CARD = "end"   # a sound pinned to the end card instead of a scene
 
 
@@ -1074,6 +1110,11 @@ def _run_stitch_job_sync(
         # Caption text per scene: what the user typed on the Finish step, otherwise the script.
         # An empty text means no caption on that scene.
         caption_texts = {doc_id: scene_caption_text(settings, doc_id, data) for _, doc_id, data in scenes_list}
+        # Scenes whose captions were placed by hand in the editor: those are shown instead, as placed.
+        placed_captions = {doc_id: scene_caption_blocks(settings, doc_id) for _, doc_id, _ in scenes_list}
+        for doc_id, blocks in placed_captions.items():
+            if blocks is not None:
+                caption_texts[doc_id] = " ".join(block["text"] for block in blocks)
         # Optional closing card: a picture shown after the last scene.
         end_card = None
         card = settings.get("endCard") if isinstance(settings.get("endCard"), dict) else {}
@@ -1121,6 +1162,8 @@ def _run_stitch_job_sync(
             # Timed on the scene's own audio: re-voicing keeps the timing, and this way the result
             # is reused whatever voice is chosen later.
             for position, (_, doc_id, data) in enumerate(scenes_list):
+                if placed_captions[doc_id] is not None:
+                    continue   # placed by hand: nothing to time
                 caption_words[position] = caption_word_times(
                     project_ref.collection("scenes").document(doc_id), data,
                     # With a narration the words are where the narration says them, not the take.
@@ -1135,7 +1178,8 @@ def _run_stitch_job_sync(
                     uid, project_id, doc_id, data.get("activeAttempt"), local_video_paths[position], voice["id"], temp_dir
                 )
         exact_timing = bool(captions) and any(caption_texts[doc_id].strip() for _, doc_id, _ in scenes_list) and all(
-            caption_words[position] for position, (_, doc_id, _) in enumerate(scenes_list) if caption_texts[doc_id].strip()
+            caption_words[position] or placed_captions[doc_id] is not None
+            for position, (_, doc_id, _) in enumerate(scenes_list) if caption_texts[doc_id].strip()
         )
 
         edits = scene_edits(project_data, scenes_list)
@@ -1171,6 +1215,7 @@ def _run_stitch_job_sync(
             caption_words=caption_words,
             edits=edits,
             report=stitch_report,
+            caption_blocks=[placed_captions[doc_id] for _, doc_id, _ in scenes_list] if captions else None,
             sounds=stitch_sounds,
         )
 
@@ -1207,6 +1252,10 @@ def _run_stitch_job_sync(
             # Same for the captions and the tightened cuts.
             "captions": captions or "none",
             "captionTexts": caption_texts if captions else {},
+            # The scenes whose captions were placed by hand, each with what was placed.
+            "captionBlocks": {
+                doc_id: caption_blocks_signature(blocks) for doc_id, blocks in placed_captions.items() if blocks is not None
+            } if captions else {},
             "captionTiming": ("exact" if exact_timing else "estimated") if captions else None,
             "tightCuts": tight_cuts,
             # The narrations this version was made with, per scene id (what was heard and where).

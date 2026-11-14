@@ -1,6 +1,7 @@
 import { currentEdits, sameEdits } from './edits';
 import { sameSounds } from './sounds';
 import { narrationKey } from './narration';
+import { blocksOfScene, blocksSignature, isCaptionedByHand, projectCaptionBlocks } from './captionBlocks';
 // Shared helpers that describe where a project is in the journey (scenes, takes, final videos).
 import { projectSceneAudio } from '../data/guidelineTags';
 import { sameAssetBible } from './assetBible';
@@ -458,9 +459,23 @@ export function finalVideoChangeReason(finalVideo, scenes, project = null) {
     if (finalVideo.captionTexts && typeof finalVideo.captionTexts === 'object' && projectCaptionStyle(project) !== 'none') {
       const squash = (t) => (t || '').replace(/\s+/g, ' ').trim();
       const edited = scenes.some((s) => !isSceneSkipped(s)
+        // A scene whose captions are placed by hand is compared below, caption by caption.
+        && !isCaptionedByHand(project, s.id) && !(s.id in (finalVideo.captionBlocks || {}))
         && s.id in finalVideo.captionTexts
         && squash(finalVideo.captionTexts[s.id]) !== squash(sceneCaptionText(project, s)));
       if (edited) return 'The caption text changed since this version was stitched.';
+    }
+    // Captions placed by hand: added, removed, moved, trimmed or reworded since. Versions stitched
+    // before that existed don't record them, so they aren't flagged.
+    if (finalVideo.captionBlocks && typeof finalVideo.captionBlocks === 'object' && projectCaptionStyle(project) !== 'none') {
+      const placed = projectCaptionBlocks(project);
+      const moved = scenes.some((s) => {
+        if (isSceneSkipped(s)) return false;
+        const now = isCaptionedByHand(project, s.id) ? blocksSignature(blocksOfScene(placed, s.id)) : null;
+        const then = s.id in finalVideo.captionBlocks ? finalVideo.captionBlocks[s.id] : null;
+        return now !== then;
+      });
+      if (moved) return 'The captions changed since this version was stitched.';
     }
     // Versions stitched before end cards existed have no endCard field at all, so they aren't flagged.
     if ('endCard' in finalVideo) {

@@ -128,6 +128,19 @@ describe('final videos', () => {
     expect(finalVideoChangeReason(stitched, changed)).toBe('Scene 2 uses a different take than this version.');
   });
 
+  it('notices captions placed by hand that were added, moved or given up since', () => {
+    const id = scenes[0].id;
+    const placed = (at) => ({ settings: { captions: { manual: { [id]: true }, blocks: { a: { sceneId: id, at, length: 1, text: 'By hand' } } } } });
+    const then = { ...stitched, captions: 'highlight', captionTexts: { [id]: 'By hand' }, captionBlocks: { [id]: '1.00:1.00:By hand' } };
+    const reason = 'The captions changed since this version was stitched.';
+    expect(finalVideoChangeReason(then, scenes, placed(1))).toBe('');
+    expect(finalVideoChangeReason(then, scenes, placed(2))).toBe(reason);
+    expect(finalVideoChangeReason(then, scenes, { settings: {} })).toBe(reason);                    // back to automatic
+    expect(finalVideoChangeReason({ ...then, captionBlocks: {} }, scenes, placed(1))).toBe(reason);    // placed since
+    const before = { ...stitched, captions: 'highlight' };
+    expect(finalVideoChangeReason(before, scenes, placed(1))).toBe('');     // stitched before this existed
+  });
+
   it('notices a narration that was made, moved or switched off since', () => {
     const made = { storageRef: 'n.mp3', seconds: 4 };
     const told = [{ ...scenes[0], narration: made }, scenes[1]];

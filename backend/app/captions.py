@@ -88,6 +88,38 @@ def word_timings(text: str, segments: List[Segment], duration: float) -> List[Wo
     return timed
 
 
+CAPTION_BLOCK_MIN_SECONDS = 0.2
+
+
+def block_words(text: str, start: float, length: float) -> List[Word]:
+    """
+    The words of a caption placed by hand, spread over the time it is shown (`start`, `length`
+    seconds) in proportion to how long each takes to say.
+    """
+    words = split_words(text)
+    length = max(CAPTION_BLOCK_MIN_SECONDS, float(length or 0))
+    if not words:
+        return []
+    weights = [_weight(word) for word in words]
+    total = sum(weights)
+    timed, clock = [], float(start)
+    for word, weight in zip(words, weights):
+        share = length * weight / total
+        timed.append((word, round(clock, 3), round(clock + share, 3)))
+        clock += share
+    return timed
+
+
+def fit_block_to_clip(words: List[Word], trim_start: float, duration: float) -> List[Word]:
+    """Like fit_words_to_clip, for a caption placed by hand: its times are kept exactly as set."""
+    fitted: List[Word] = []
+    for text, start, end in words:
+        a, b = max(0.0, start - trim_start), min(duration, end - trim_start)
+        if b - a >= 0.03:
+            fitted.append((text, round(a, 3), round(b, 3)))
+    return fitted
+
+
 def fit_words_to_clip(words: List[Word], trim_start: float, duration: float) -> List[Word]:
     """
     Word times measured on a whole clip, moved to the part of it that is kept (from `trim_start`,
@@ -219,14 +251,20 @@ def build_ass(scenes: List[List[Word]], style: str, width: int, height: int) -> 
             lines.append(f"Dialogue: 0,{_clock(start)},{_clock(end)},Cap,,0,0,0,,{text}")
 
     limits = {"pop": (2, 12), "minimal": (5, 28)}.get(style, (3, 16))
-    for words in scenes:
+    filled = [words for words in scenes if words]
+    for position, words in enumerate(filled):
         chunks = chunk_words(words, *limits)
+        # The next group of words (the next scene, or the next caption placed by hand) starts here:
+        # a line never stays up into it.
+        following = filled[position + 1][0][1] if position + 1 < len(filled) else None
         for c, chunk in enumerate(chunks):
             chunk_start = chunk[0][1]
             # A line stays up until the next one starts, but never lingers through a long pause.
             next_start = chunks[c + 1][0][1] if c + 1 < len(chunks) else None
             hold = chunk[-1][2] + 0.25
             chunk_end = min(hold, next_start) if next_start is not None else hold
+            if next_start is None and following is not None and following > chunk_start:
+                chunk_end = min(chunk_end, following)
 
             if style == "pop":
                 text = " ".join(_clean(w[0], True) for w in chunk).upper()

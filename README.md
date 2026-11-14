@@ -117,6 +117,13 @@ Cloud Run) to switch on two things at stitch time:
   trimEnd, on}`. Code: `backend/app/routes/narration.py`, `voiceover.scene_narration`,
   `frontend/src/utils/narration.js`.
 
+- **Captions placed by hand.** In the editor a scene's caption can be cut into short captions on
+  the Captions track: each is dragged to move it, trimmed by its right edge, reworded or removed,
+  and "Add caption" puts a new one at the playhead. Such a scene shows exactly these when stitched
+  (no key needed). Data: `settings.captions.manual.<scene id>` and `settings.captions.blocks.<id> =
+  {sceneId, at, length, text}`. Code: `jobs.scene_caption_blocks`, `captions.block_words`,
+  `frontend/src/utils/captionBlocks.js`.
+
 Without the key the app behaves as before: no Voice card, no sound effects, estimated caption timing. Code:
 `backend/app/elevenlabs.py` (the client) and `backend/app/voiceover.py` (what the stitch does).
 
