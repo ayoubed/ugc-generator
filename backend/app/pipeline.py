@@ -937,11 +937,16 @@ def build_storyboard_frame_prompt(
     asset_lines: Optional[List[str]] = None,
     product_led: bool = False,
     feedback: Optional[List[str]] = None,
+    ends_scene: bool = False,
 ) -> str:
-    """The prompt for a new storyboard frame. `pictures` are the attached pictures, in order."""
+    """
+    The prompt for a new storyboard frame. `pictures` are the attached pictures, in order.
+    ends_scene: the frame is the picture the scene's video ends on, not the one it starts on.
+    """
     problems = [f for f in (feedback or []) if f]
     return prompts.render(
         "storyboard.frame",
+        position="ends" if ends_scene else "starts",
         moment=" ".join((moment or "").split()) or "the opening moment of the scene.",
         kind_rule=prompts.text("storyboard.frame.product_led" if product_led else "storyboard.frame.creator"),
         details=_detail_lines(asset_lines),
@@ -973,6 +978,7 @@ def generate_storyboard_frame(
     instruction: Optional[str] = None,
     feedback: Optional[List[str]] = None,
     image_model: Optional[str] = None,
+    ends_scene: bool = False,
 ) -> str:
     """
     Draws one storyboard frame with the image model: the picture a scene's video will start on.
@@ -990,7 +996,7 @@ def generate_storyboard_frame(
         prompt = build_storyboard_edit_prompt(instruction or "", references, asset_lines)
         contents: List[Any] = [_image_part(base_image_path)]
     else:
-        prompt = build_storyboard_frame_prompt(moment, references, asset_lines, product_led, feedback)
+        prompt = build_storyboard_frame_prompt(moment, references, asset_lines, product_led, feedback, ends_scene)
         contents = []
     contents += [_image_part(r["path"]) for r in references]
     contents.append(prompt)

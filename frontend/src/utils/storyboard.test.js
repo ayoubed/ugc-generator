@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { framesInOrder, hasLookFrame, runInPool, sceneMoment, startFrame, startsOnStoryboard, storyboardCounts, unusedFrame } from './storyboard';
+import { endFrame, endsOnStoryboard, frameOfRole, framesInOrder, hasLookFrame, runInPool, sceneMoment, startFrame, startsOnStoryboard, storyboardCounts, unusedFrame } from './storyboard';
 
 const frame = (id, extra = {}) => ({ id, order: 0, imageRef: `f/${id}.png`, accepted: false, look: false, ...extra });
 const withFrames = (...frames) => ({ storyboard: { frames: Object.fromEntries(frames.map((f) => [f.id, f])) } });
@@ -30,6 +30,21 @@ describe('storyboard frames', () => {
     expect(unusedFrame(withFrames(frame('a', { accepted: true })))).toBeNull();
     expect(unusedFrame(withFrames(frame('a', { imageRef: '' })))).toBeNull();
     expect(unusedFrame({})).toBeNull();
+  });
+
+  it('keeps the picture a scene ends on apart from the one it starts on', () => {
+    const end = frame('e', { order: 0, role: 'end', accepted: true });
+    const scene = withFrames(end, frame('s', { order: 1, accepted: true }));
+    expect(startFrame(scene).id).toBe('s');
+    expect(endFrame(scene).id).toBe('e');
+    expect(frameOfRole(scene, 'end').id).toBe('e');
+    expect(frameOfRole(withFrames(frame('s')), 'end')).toBeNull();
+    expect(endsOnStoryboard({ ...scene, endImageRef: 'f/e.png' })).toBe(true);
+    expect(endsOnStoryboard({ ...scene, endImageRef: 'other.png' })).toBe(false);
+    expect(unusedFrame(withFrames({ ...end, accepted: false }))).toBeNull();     // only start pictures are counted
+    expect(storyboardCounts([withFrames(end)])).toEqual({ total: 1, withFrame: 0, accepted: 0 });
+    expect(hasLookFrame([withFrames({ ...end, look: true })])).toBe(false);
+    expect(sceneMoment({ description: 'He fastens it.' }, 'end')).toBe('The last moment of this scene, when its action is finished: He fastens it.');
   });
 
   it('describes a frame by the scene itself', () => {

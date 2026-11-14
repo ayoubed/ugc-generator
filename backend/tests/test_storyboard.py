@@ -398,3 +398,64 @@ def test_only_a_frame_in_use_can_be_the_look(board):
     board.patch(url, json={"accepted": True, "look": False})
     assert board.scene()["storyboard"]["frames"][made["id"]]["look"] is False
     assert routes.router is not None
+
+
+# --- the picture a scene ends on -----------------------------------------------------------------
+
+def end(fid, order=1, accepted=True):
+    return {**frame(fid, order, accepted=accepted), "role": "end"}
+
+
+def test_an_end_frame_is_never_the_start_and_a_start_frame_never_the_end():
+    frames = [end("e", 0), frame("s", 1, accepted=True)]
+    assert storyboard.start_frame(frames)["id"] == "s" and storyboard.end_frame(frames)["id"] == "e"
+    assert storyboard.end_frame([frame("s", accepted=True), end("e", accepted=False)]) is None
+    assert storyboard.role_of({}) == "start" and storyboard.role_of({"role": "end"}) == "end"
+
+
+def test_an_end_frame_becomes_the_scene_end_picture_and_gives_it_back():
+    scene = {"imageSource": "creator", "endImageRef": f"{BASE}scenes/0/end_old.png", "endImageUrl": "https://x/old"}
+    made = end("e")
+    update = storyboard.scene_update_for(scene, [made])
+    assert update["endImageRef"] == made["imageRef"] and "customStartImageRef" not in update
+    assert update["storyboard"]["end"]["previous"]["endImageRef"].endswith("end_old.png")
+
+    back = storyboard.scene_update_for({**scene, **update}, [{**made, "accepted": False}])
+    assert back["endImageRef"].endswith("end_old.png") and back["endImageUrl"] == "https://x/old"
+    assert back["storyboard"]["end"] is None
+
+    changed = {**scene, **update, "endImageRef": f"{BASE}scenes/0/end_new.png"}       # the user uploaded another one since
+    assert "endImageRef" not in storyboard.scene_update_for(changed, [])
+
+
+def test_an_end_frame_is_drawn_from_the_scene_start_and_described_as_the_last_moment():
+    scene = {"description": "A hand fastens the watch.", "storyboard": {"frames": {"s": frame("s", accepted=True, look=True)}}}
+    specs = storyboard.frame_picture_specs(PROJECT, scene, [("0", scene)], "u1", role="end")
+    assert [s["kind"] for s in specs] == ["product", "start"]                        # its own start is sent once
+    assert specs[-1]["description"] == storyboard.START_FRAME_TEXT
+    assert storyboard.default_moment(scene, "end").startswith("The last moment of this scene")
+    assert "a video scene ends on" in pipeline.build_storyboard_frame_prompt("x", [], ends_scene=True)
+    assert "a video scene starts on" in pipeline.build_storyboard_frame_prompt("x", [])
+
+
+def test_an_end_frame_never_sets_the_look():
+    assert storyboard.with_default_look(end("e"), [])["look"] is False
+    scenes = [("0", {"storyboard": {"frames": {"e": {**end("e"), "look": True}}}})]
+    assert storyboard.look_frames(scenes) == []
+
+
+def test_the_api_draws_an_end_picture_next_to_the_start(board):
+    start = add(board)
+    made = add(board, role="end")
+    assert made["role"] == "end" and made["accepted"] is True and made["look"] is False
+    assert board.studio.draws[-1]["ends_scene"] is True
+    assert board.studio.draws[-1]["moment"].startswith("The last moment of this scene")
+    assert [p["kind"] for p in board.studio.draws[-1]["reference_images"]] == ["product", "start"]
+    scene = board.scene()
+    assert scene["customStartImageRef"] == start["imageRef"] and scene["endImageRef"] == made["imageRef"]
+
+    url = f"/api/projects/p1/scenes/0/storyboard/frames/{made['id']}"
+    assert board.patch(url, json={"look": True}).status_code == 400
+    assert board.delete(url).status_code == 200
+    assert board.scene()["endImageRef"] is None and board.scene()["customStartImageRef"] == start["imageRef"]
+    assert board.post("/api/projects/p1/scenes/0/storyboard/frames", json={"role": "middle"}).status_code == 422

@@ -385,8 +385,9 @@ export function previewVoice(projectId) {
 const framesPath = (projectId, sceneId) => `/api/projects/${projectId}/scenes/${sceneId}/storyboard/frames`;
 
 /** Draw a new frame (description left out: the scene's own text), or add an uploaded picture as one. */
-export function addStoryboardFrame(projectId, sceneId, { description = '', storageRef = '' } = {}) {
-  const body = {};
+export function addStoryboardFrame(projectId, sceneId, { description = '', storageRef = '', role = 'start' } = {}) {
+  // role 'end': the picture the scene's video ends on.
+  const body = role === 'end' ? { role } : {};
   if (description.trim()) body.description = description.trim();
   if (storageRef) body.storage_ref = storageRef;
   return callApi(framesPath(projectId, sceneId), { body, fallback: 'Could not make the frame' });

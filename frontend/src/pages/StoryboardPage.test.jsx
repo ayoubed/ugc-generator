@@ -87,7 +87,7 @@ describe('Storyboard step', () => {
 
   it('draws a scene frame from the description, which can be edited first', async () => {
     const card = open();
-    const box = card(1).getByLabelText('What the frame shows');
+    const box = card(1).getByLabelText('What the picture shows');
     expect(box.value).toBe('What scene 0 shows.');
     await userEvent.clear(box);
     await userEvent.type(box, 'The watch on a left wrist.');
@@ -188,6 +188,32 @@ describe('Storyboard step', () => {
     expect(removeStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1');
   });
 
+  it('adds the picture a scene ends on, drawn as its last moment', async () => {
+    const card = open([withFrame('0', { accepted: true }, { customStartImageRef: 'f1.png' })]);
+    expect(card(1).queryByRole('region', { name: 'Ends on, scene 1' })).toBeNull();
+    await userEvent.click(card(1).getByRole('button', { name: /Add the picture this scene ends on/ }));
+    const end = within(card(1).getByRole('region', { name: 'Ends on, scene 1' }));
+    expect(end.getByLabelText('What the picture shows').value).toMatch(/^The last moment of this scene/);
+    await userEvent.click(end.getByRole('button', { name: 'Draw the end picture' }));
+    const [, sceneId, body] = addStoryboardFrame.mock.calls[0];
+    expect(sceneId).toBe('0');
+    expect(body.role).toBe('end');
+  });
+
+  it('shows an end picture with its own checkbox, and no look choice', async () => {
+    const frames = {
+      f1: frame({ accepted: true, look: true }),
+      e1: frame({ id: 'e1', order: 1, role: 'end', imageRef: 'e1.png', accepted: true, description: 'The clasp is closed.' }),
+    };
+    const card = open([scene('0', { storyboard: { frames }, customStartImageRef: 'f1.png', endImageRef: 'e1.png' })]);
+    const end = within(card(1).getByRole('region', { name: 'Ends on, scene 1' }));
+    expect(end.getByText('The video ends on this picture')).toBeTruthy();
+    expect(end.getByRole('img').getAttribute('src')).toBe('https://files.test/e1.png');
+    expect(end.queryByRole('checkbox', { name: /match this one/ })).toBeNull();
+    await userEvent.click(end.getByRole('checkbox', { name: /End this scene's video on this picture/ }));
+    expect(editStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'e1', { accepted: false });
+  });
+
   it('shows what went wrong on the scene it happened on', async () => {
     editStoryboardFrame.mockRejectedValueOnce(new Error('This frame no longer exists.'));
     const card = open([withFrame('0')]);
@@ -198,7 +224,7 @@ describe('Storyboard step', () => {
   it('uploads a picture as the frame, replacing the one there', async () => {
     const card = open([withFrame('0')]);
     const file = new File(['x'], 'wrist.png', { type: 'image/png' });
-    await userEvent.upload(card(1).getByLabelText('Upload a picture for scene 1'), file);
+    await userEvent.upload(card(1).getByLabelText('Upload a picture: starts on, scene 1'), file);
     await waitFor(() => expect(addStoryboardFrame).toHaveBeenCalled());
     expect(removeStoryboardFrame).toHaveBeenCalledWith('p1', '0', 'f1');
     const [, sceneId, body] = addStoryboardFrame.mock.calls[0];

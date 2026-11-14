@@ -9,7 +9,7 @@ import { useModels } from '../hooks/useModels';
 import { useAuth } from '../hooks/useAuth';
 import { addStoryboardFrame, editStoryboardFrame } from '../services/api';
 import { STEP, isSceneSkipped, maxReachableStep, sceneLabels, stepPath } from '../utils/projectProgress';
-import { framesInOrder, hasLookFrame, runInPool, sceneMoment, storyboardCounts, unusedFrame } from '../utils/storyboard';
+import { frameOfRole, hasLookFrame, runInPool, sceneMoment, storyboardCounts, unusedFrame } from '../utils/storyboard';
 
 // Frames drawn at the same time by "Draw the missing frames".
 const DRAW_AT_ONCE = 3;
@@ -48,7 +48,7 @@ export default function StoryboardPage() {
   const labels = sceneLabels(scenes);
   const inVideo = scenes.filter((scene) => !isSceneSkipped(scene));
   const counts = storyboardCounts(inVideo);
-  const missing = inVideo.filter((scene) => framesInOrder(scene).length === 0 && sceneMoment(scene));
+  const missing = inVideo.filter((scene) => !frameOfRole(scene, 'start') && sceneMoment(scene));
   const look = hasLookFrame(scenes);
   const drawingAll = drawing.length > 0;
   // Drawn but not accepted: the video does not start on these yet.

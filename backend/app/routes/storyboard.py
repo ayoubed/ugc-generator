@@ -23,6 +23,8 @@ class NewFrameRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=600)
     # A picture the user uploaded, used as the frame as it is (nothing is drawn).
     storage_ref: Optional[str] = Field(None, max_length=1024)
+    # "start": the picture the scene's video starts on. "end": the picture it ends on.
+    role: str = Field(storyboard.ROLE_START, pattern="^(start|end)$")
 
 
 class RemakeFrameRequest(BaseModel):
@@ -113,9 +115,10 @@ async def add_frame_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"A scene can have {storyboard.MAX_FRAMES_PER_SCENE} frames at most. Remove one to add another.",
         )
-    description = " ".join((request.description or "").split()) or storyboard.default_moment(scene_data)
+    description = " ".join((request.description or "").split()) or storyboard.default_moment(scene_data, request.role)
     # A new picture is used by default; the user switches off the ones they don't want.
-    frame = {"id": storyboard.new_frame_id(), "description": description, "accepted": True, "look": False, "version": 0}
+    frame = {"id": storyboard.new_frame_id(), "role": request.role, "description": description,
+             "accepted": True, "look": False, "version": 0}
 
     if request.storage_ref:
         if not request.storage_ref.startswith(f"users/{uid}/projects/{pid}/"):
@@ -182,6 +185,8 @@ async def edit_frame_endpoint(
     if request.look is not None:
         if request.look and not frame.get("accepted"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Accept this frame first.")
+        if request.look and storyboard.role_of(frame) == storyboard.ROLE_END:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only a picture a scene starts on can set the look.")
         frame["look"] = request.look
     return _save(scene_ref, [frame if f["id"] == fid else f for f in frames])
 
