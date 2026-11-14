@@ -15,6 +15,8 @@ import {
   maxReachableStep,
   previousIncludedScene,
   projectEndCard,
+  captionTextUpdate,
+  hasOwnCaptionText,
   sceneCaptionText,
   sceneChangesSinceTake,
   sceneLabels,
@@ -184,6 +186,22 @@ describe('small helpers', () => {
     const project = { settings: { captions: { texts: { 0: '' } } } };
     expect(sceneCaptionText(project, { id: '0', script: 'Hi.' })).toBe('');
     expect(sceneCaptionText(project, { id: '1', script: 'Bye.' })).toBe('Bye.');
+  });
+
+  it('keeps a typed caption only while the script is the one it was typed for', () => {
+    const project = { settings: { captions: { texts: { 0: 'My words.', 1: 'Old words.', 2: 'From before.' }, textFor: { 0: 'Hi  there.', 1: 'An older line.' } } } };
+    expect(sceneCaptionText(project, { id: '0', script: 'Hi there. ' })).toBe('My words.');
+    expect(hasOwnCaptionText(project, { id: '0', script: 'Hi there.' })).toBe(true);
+    // The script of scene 1 was rewritten after its caption was typed.
+    expect(sceneCaptionText(project, { id: '1', script: 'A new line.' })).toBe('A new line.');
+    expect(hasOwnCaptionText(project, { id: '1', script: 'A new line.' })).toBe(false);
+    // Typed before the app kept the script with it: used as it is.
+    expect(sceneCaptionText(project, { id: '2', script: 'Anything.' })).toBe('From before.');
+  });
+
+  it('saves a typed caption with the script it replaces, and removes both together', () => {
+    expect(captionTextUpdate({ id: '3', script: 'Line.' }, 'Mine.')).toEqual({ 'captions.texts.3': 'Mine.', 'captions.textFor.3': 'Line.' });
+    expect(captionTextUpdate({ id: '3', script: 'Line.' }, undefined, 'DELETE')).toEqual({ 'captions.texts.3': 'DELETE', 'captions.textFor.3': 'DELETE' });
   });
 
   it('formats lists, durations and timestamps', () => {

@@ -328,6 +328,30 @@ def scene_edits(project_data: Optional[Dict[str, Any]], scenes_list: List[tuple]
 SOUND_END_CARD = "end"   # a sound pinned to the end card instead of a scene
 
 
+def _same_script(a: Any, b: Any) -> bool:
+    return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
+
+
+def scene_caption_text(settings: Optional[Dict[str, Any]], doc_id: str, scene_data: Optional[Dict[str, Any]]) -> str:
+    """The caption text of a scene: what the user typed on the Video step, otherwise the script.
+
+    A typed text is kept with the script it replaced (`captions.textFor`). Once the scene's script is
+    no longer that one, the typed text belongs to an older script and the caption follows the script
+    again. Texts saved before `textFor` existed have no such note and are used as they are.
+    """
+    script = str((scene_data or {}).get("script") or "")
+    captions = (settings or {}).get("captions")
+    captions = captions if isinstance(captions, dict) else {}
+    texts = captions.get("texts") if isinstance(captions.get("texts"), dict) else {}
+    own = texts.get(doc_id)
+    if not isinstance(own, str):
+        return script
+    written_for = (captions.get("textFor") if isinstance(captions.get("textFor"), dict) else {}).get(doc_id)
+    if isinstance(written_for, str) and not _same_script(written_for, script):
+        return script
+    return own
+
+
 def project_sounds(project_data: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     The sound effects placed in the editor (settings.sounds.<id>), cleaned: each has the file, the
@@ -1032,12 +1056,7 @@ def _run_stitch_job_sync(
         tight_cuts = settings.get("tightCuts") is not False
         # Caption text per scene: what the user typed on the Finish step, otherwise the script.
         # An empty text means no caption on that scene.
-        caption_settings = settings.get("captions") if isinstance(settings.get("captions"), dict) else {}
-        own_texts = caption_settings.get("texts") if isinstance(caption_settings.get("texts"), dict) else {}
-        caption_texts = {
-            doc_id: own_texts[doc_id] if isinstance(own_texts.get(doc_id), str) else str(data.get("script") or "")
-            for _, doc_id, data in scenes_list
-        }
+        caption_texts = {doc_id: scene_caption_text(settings, doc_id, data) for _, doc_id, data in scenes_list}
         # Optional closing card: a real product picture with a headline, after the last scene.
         end_card = None
         card = settings.get("endCard") if isinstance(settings.get("endCard"), dict) else {}

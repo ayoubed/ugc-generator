@@ -30,6 +30,7 @@ import {
   finalVideoVersions,
   formatDateTime,
   formatElapsed,
+  captionTextUpdate,
   hasOwnCaptionText,
   isSceneSkipped,
   isStitchStuck,
@@ -110,13 +111,18 @@ function ProjectVideo({ projectId: id }) {
     setDownloadFailed(false);
   };
 
+  // The scenes as last rendered, for saves that run from timers and on leaving the page.
+  const scenesRef = useRef(scenes);
+  useEffect(() => { scenesRef.current = scenes; }, [scenes]);
+  const sceneById = (sceneId) => scenesRef.current.find((s) => s.id === sceneId) || { id: sceneId };
+
   const saveText = async (sceneId) => {
     clearTimeout(timersRef.current[sceneId]);
     delete timersRef.current[sceneId];
     if (!(sceneId in draftsRef.current)) return true;
     const text = draftsRef.current[sceneId];
     try {
-      await updateProjectSettings(id, { [`captions.texts.${sceneId}`]: text });
+      await updateProjectSettings(id, captionTextUpdate(sceneById(sceneId), text));
       if (draftsRef.current[sceneId] === text) {
         const next = { ...draftsRef.current };
         delete next[sceneId];
@@ -153,7 +159,7 @@ function ProjectVideo({ projectId: id }) {
     draftsRef.current = next;
     setDrafts(next);
     try {
-      await updateProjectSettings(id, { [`captions.texts.${sceneId}`]: deleteField() });
+      await updateProjectSettings(id, captionTextUpdate(sceneById(sceneId), undefined, deleteField()));
       setSaveState('saved');
     } catch (err) {
       console.error(`Could not reset the caption of scene ${sceneId}:`, err);
@@ -168,7 +174,7 @@ function ProjectVideo({ projectId: id }) {
     return () => {
       Object.values(timers.current).forEach(clearTimeout);
       Object.entries(pending.current).forEach(([sceneId, text]) => {
-        updateProjectSettings(id, { [`captions.texts.${sceneId}`]: text })
+        updateProjectSettings(id, captionTextUpdate(scenesRef.current.find((s) => s.id === sceneId) || { id: sceneId }, text))
           .catch((err) => console.error(`Could not save the caption of scene ${sceneId}:`, err));
       });
     };

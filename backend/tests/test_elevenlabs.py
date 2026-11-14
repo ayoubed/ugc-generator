@@ -419,3 +419,13 @@ def test_revoiced_audio_is_made_once_and_then_reused(media, tmp_path):
     media["stored"].add(ref)
     revoiced_audio("u1", "p1", "2", 1, "scene.mp4", "v1", str(tmp_path))
     assert media["changed"] == ["v1"]
+
+
+def test_a_caption_typed_for_an_older_script_gives_way_to_the_new_script(stitch):
+    # Scene 0's caption was typed for the script it still has; scene 1's script was rewritten since.
+    project, seen = stitch({"captions": {
+        "texts": {"0": "My own words.", "1": "Typed for the old line."},
+        "textFor": {"0": "Line 0.", "1": "The old line."},
+    }})
+    assert seen["timed"] == ["My own words.", "Line 1."]
+    assert project["finalVideos"].values[-1]["captionTexts"] == {"0": "My own words.", "1": "Line 1."}

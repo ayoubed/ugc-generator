@@ -356,7 +356,15 @@ describe('captions on the timeline', () => {
     fireEvent.change(field, { target: { value: 'One pump, every night.' } });
     expect(track('Captions track').getByText('One pump, every night.')).toBeTruthy();
     fireEvent.blur(field);
-    expect(saved()).toEqual(['p1', { 'captions.texts.1': 'One pump, every night.' }]);
+    expect(saved()).toEqual(['p1', { 'captions.texts.1': 'One pump, every night.', 'captions.textFor.1': 'Line 1.' }]);
+  });
+
+  it('goes back to the script when the script changed after the caption was typed', async () => {
+    show({ settings: { captions: { texts: { 0: 'Typed for the old script.' }, textFor: { 0: 'The old script.' } } } });
+    expect(track('Captions track').queryByText('Typed for the old script.')).toBeNull();
+    await userEvent.click(caption(1));
+    expect(screen.getByLabelText('Caption text').value).toBe('Line 0.');
+    expect(screen.queryByRole('button', { name: 'Use the script again' })).toBeNull();
   });
 
   it('can empty a caption, and go back to the script', async () => {
@@ -365,7 +373,7 @@ describe('captions on the timeline', () => {
     fireEvent.change(screen.getByLabelText('Caption text'), { target: { value: '' } });
     expect(track('Captions track').getByText('No caption')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Use the script again' }));
-    expect(saved()).toEqual(['p1', { 'captions.texts.0': 'DELETE' }]);
+    expect(saved()).toEqual(['p1', { 'captions.texts.0': 'DELETE', 'captions.textFor.0': 'DELETE' }]);
   });
 
   it('uses the page\'s caption texts when the page keeps them', async () => {

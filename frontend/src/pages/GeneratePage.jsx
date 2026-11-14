@@ -37,6 +37,7 @@ import {
   previousIncludedScene,
   sceneChangesSinceTake,
   sceneHasVideo,
+  captionTextUpdate,
   sceneStatus,
   scenesToRemake,
   startPictureRef,
@@ -758,7 +759,7 @@ function GenerateVideos({ projectId: id }) {
                   nextNumber={placement[idx].next?.number || null}
                   canSkip={sceneCount > 1}
                   alternativeCount={sceneAlternatives(mergedScenes, scene).length}
-                  onUseSpokenText={(text) => updateProjectSettings(id, { [`captions.texts.${scene.id}`]: text })
+                  onUseSpokenText={(text) => updateProjectSettings(id, captionTextUpdate(scene, text))
                     .catch(() => setSceneError(scene.id, "Couldn't save the caption. Check your connection and try again."))}
                   onToggleSkip={(skipped) => handleToggleSkip(scene.id, skipped)}
                   project={project}

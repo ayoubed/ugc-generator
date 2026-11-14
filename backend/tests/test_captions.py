@@ -61,3 +61,20 @@ def test_clock_format():
     assert captions._clock(0) == "0:00:00.00"
     assert captions._clock(75.5) == "0:01:15.50"
     assert captions._clock(-1) == "0:00:00.00"
+
+
+def test_a_typed_caption_is_used_only_while_the_script_is_the_one_it_replaced():
+    from app.jobs import scene_caption_text
+
+    settings = {"captions": {
+        "texts": {"0": "Mine.", "1": "Old words.", "2": "From before.", "3": ""},
+        "textFor": {"0": "Hi  there.", "1": "An older line.", "3": "Quiet."},
+    }}
+    assert scene_caption_text(settings, "0", {"script": "Hi there. "}) == "Mine."
+    assert scene_caption_text(settings, "1", {"script": "A new line."}) == "A new line."
+    # Typed before the script was kept with it: used as it is.
+    assert scene_caption_text(settings, "2", {"script": "Anything."}) == "From before."
+    # An empty typed caption still means "no caption" while the script is unchanged.
+    assert scene_caption_text(settings, "3", {"script": "Quiet."}) == ""
+    assert scene_caption_text(settings, "4", {"script": "Just the script."}) == "Just the script."
+    assert scene_caption_text({}, "0", {}) == ""

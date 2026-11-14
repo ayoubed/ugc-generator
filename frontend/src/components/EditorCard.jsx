@@ -130,12 +130,16 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   }, [ready.length]);
 
   // ── Saving ──────────────────────────────────────────────────────────────────────────────────
+  // Fields saved in the same write as a pending key (a caption text goes with the script it replaces).
+  const alongside = useRef({});
   const flush = (key) => {
     clearTimeout(timers.current[key]);
     if (!(key in pending.current)) return;
     const value = pending.current[key];
     delete pending.current[key];
-    updateProjectSettings(project.id, { [key]: value }).catch((err) => {
+    const more = alongside.current[key];
+    delete alongside.current[key];
+    updateProjectSettings(project.id, { [key]: value, ...more }).catch((err) => {
       console.error('Could not save the edit:', err);
       setError(friendlyError(err));
     });
@@ -248,6 +252,8 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
   const changeCaption = (scene, text) => {
     if (captions) return captions.change(scene.id, text);
     setCaptionDrafts((prev) => ({ ...prev, [scene.id]: text }));
+    // Kept with the script it replaces, so a later script change brings the caption back to the script.
+    alongside.current[`captions.texts.${scene.id}`] = { [`captions.textFor.${scene.id}`]: scene.script || '' };
     return saveSoon(`captions.texts.${scene.id}`, text);
   };
   const resetCaption = (scene) => {
@@ -258,6 +264,7 @@ export default function EditorCard({ project, scenes, fallbackSeconds = 8, disab
       return next;
     });
     pending.current[`captions.texts.${scene.id}`] = deleteField();
+    alongside.current[`captions.texts.${scene.id}`] = { [`captions.textFor.${scene.id}`]: deleteField() };
     return flush(`captions.texts.${scene.id}`);
   };
 

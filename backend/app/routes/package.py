@@ -21,8 +21,8 @@ from app.captions import caption_style
 from app.errors import user_message
 from app.interchange import build_readme, build_srt, build_xmeml, caption_cues, kept_range, slug
 from app.jobs import (
-    SOUND_END_CARD, _assert_owned_path, is_scene_skipped, ordered_scenes, project_music, project_sounds, scene_edits,
-    spawn_background,
+    SOUND_END_CARD, _assert_owned_path, is_scene_skipped, ordered_scenes, project_music, project_sounds, scene_caption_text,
+    scene_edits, spawn_background,
 )
 from app.pipeline import place_sounds, probe_media
 from app.storage import download_file, get_download_url, set_download_name, upload_file
@@ -66,8 +66,6 @@ def _run_package_job_sync(uid: str, project_id: str) -> None:
         version = current_version(project_data)
         edits = scene_edits(project_data, scenes)
         captions_on = caption_style((settings.get("captions") or {}).get("style") if isinstance(settings.get("captions"), dict) else None)
-        own_texts = (settings.get("captions") or {}).get("texts") if isinstance(settings.get("captions"), dict) else {}
-        own_texts = own_texts if isinstance(own_texts, dict) else {}
 
         clips: List[Dict[str, Any]] = []
         at = 0.0
@@ -83,7 +81,7 @@ def _run_package_job_sync(uid: str, project_id: str) -> None:
             cut = cut if cut.get("attempt") == data.get("activeAttempt") else {}
             edit = edits[position] or {}
             start, end = kept_range(float(info["duration"]), edit, cut, (version.get("edits") or {}).get(doc_id))
-            text = own_texts[doc_id] if isinstance(own_texts.get(doc_id), str) else str(data.get("script") or "")
+            text = scene_caption_text(settings, doc_id, data)
             clips.append({
                 "name": f"Scene {label}", "file": f"media/{file_name}", "duration": float(info["duration"]),
                 "start": start, "end": end, "at": at, "has_audio": bool(info.get("has_audio")), "muted": bool(edit.get("muted")),

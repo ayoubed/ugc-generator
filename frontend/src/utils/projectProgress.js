@@ -347,20 +347,45 @@ export function projectCaptionStyle(project) {
   return CAPTION_OPTIONS.some((o) => o.value === value) ? value : 'highlight';
 }
 
+const sameScript = (a, b) => String(a || '').split(/\s+/).filter(Boolean).join(' ') === String(b || '').split(/\s+/).filter(Boolean).join(' ');
+
+/**
+ * What the user typed as this scene's caption, or undefined when the caption follows the script.
+ * A typed text is saved with the script it replaced (`captions.textFor`). Once the scene's script
+ * is no longer that one, the typed text belongs to an older script and no longer counts. Texts
+ * saved before `textFor` existed have no such note and are used as they are.
+ */
+function ownCaptionText(project, scene) {
+  const captions = project?.settings?.captions;
+  const own = captions?.texts && typeof captions.texts === 'object' ? captions.texts[scene?.id] : undefined;
+  if (typeof own !== 'string') return undefined;
+  const writtenFor = captions.textFor && typeof captions.textFor === 'object' ? captions.textFor[scene?.id] : undefined;
+  if (typeof writtenFor === 'string' && !sameScript(writtenFor, scene?.script)) return undefined;
+  return own;
+}
+
 /**
  * The caption text of a scene: what the user typed on the Video step, otherwise the script.
  * An empty text means "no caption on this scene".
  */
 export function sceneCaptionText(project, scene) {
-  const texts = project?.settings?.captions?.texts;
-  const own = texts && typeof texts === 'object' ? texts[scene?.id] : undefined;
-  return typeof own === 'string' ? own : scene?.script || '';
+  return ownCaptionText(project, scene) ?? (scene?.script || '');
 }
 
 /** Whether the user replaced the script with their own caption text for this scene. */
 export function hasOwnCaptionText(project, scene) {
-  const texts = project?.settings?.captions?.texts;
-  return Boolean(texts && typeof texts === 'object' && typeof texts[scene?.id] === 'string');
+  return ownCaptionText(project, scene) !== undefined;
+}
+
+/**
+ * The settings to save when the user types their own caption for a scene (`text`), or goes back to
+ * the script (`text` undefined, with `remove` being Firestore's deleteField()).
+ */
+export function captionTextUpdate(scene, text, remove) {
+  const id = scene?.id;
+  return text === undefined
+    ? { [`captions.texts.${id}`]: remove, [`captions.textFor.${id}`]: remove }
+    : { [`captions.texts.${id}`]: text, [`captions.textFor.${id}`]: scene?.script || '' };
 }
 
 /** Tightened cuts are on unless switched off. */
